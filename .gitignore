@@ -1,0 +1,13 @@
+.DS_Store
+.AppleDouble
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.swp
+*.log
+node_modules/
+*-backup-*.json
+.env
+.env.local
+.vercel/
