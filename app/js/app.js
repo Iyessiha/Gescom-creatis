@@ -169,8 +169,8 @@ function defaultSettings(){
   return {company:defaultCompany(),tva:18,devise:"F CFA",year:new Date().getFullYear(),seqDevis:1,seqFacture:1,seqCommande:1};
 }
 function defaultRoles(){
-  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","parametres"].forEach(m=>full[m]="edit");
-  const mk=(map)=>{const o={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","parametres"].forEach(m=>o[m]=map[m]||"none");return o};
+  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","parametres","dokira"].forEach(m=>full[m]="edit");
+  const mk=(map)=>{const o={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","parametres","dokira"].forEach(m=>o[m]=map[m]||"none");return o};
   return [
     {id:"administrateur",name:"Administrateur",system:true,color:"noir",perms:full,widgets:["kpi_encaisse","kpi_reste","kpi_devis","kpi_leads","chart_ca","pipe_devis","list_relance","list_echeances"]},
     {id:"commercial",name:"Commercial",color:"cyan",perms:mk({dashboard:"view",clients:"edit",devis:"edit",factures:"edit",commandes:"edit",catalogue:"edit"}),widgets:["kpi_devis","kpi_leads","kpi_encaisse","kpi_prod","pipe_devis","list_relance"]},
@@ -244,7 +244,8 @@ const MODS=[
   {k:"devis",label:"Devis"},{k:"factures",label:"Factures"},
   {k:"commandes",label:"Commandes & projets"},{k:"compta",label:"Comptabilité & TVA"},
   {k:"catalogue",label:"Catalogue"},{k:"users",label:"Utilisateurs & rôles"},
-  {k:"parametres",label:"Paramètres"}
+  {k:"parametres",label:"Paramètres"},
+  {k:"dokira",label:"Sync Dokira"}
 ];
 const WIDGETS=[
   {k:"kpi_encaisse",label:"Encaissé (mois/année)"},{k:"kpi_reste",label:"Reste à encaisser"},
@@ -324,6 +325,7 @@ const ROUTES={
   catalogue:{t:"Catalogue produits",render:viewCatalogue},
   users:{t:"Utilisateurs & rôles",render:viewUsers},
   parametres:{t:"Paramètres",render:viewParametres},
+  dokira:{t:"Sync Dokira",render:viewDokira},
 };
 function go(route){
   if(!USER)return;
