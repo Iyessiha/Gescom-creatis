@@ -104,6 +104,15 @@ h1 .y{color:var(--jaune)}
   transition:border-color .2s,background .2s;display:inline-block;
 }
 .btn-ghost:hover{border-color:rgba(255,255,255,.6);background:rgba(255,255,255,.07)}
+.btn-login-hero{
+  padding:14px 24px;border-radius:30px;
+  border:1px solid rgba(255,255,255,.15);
+  background:rgba(255,255,255,.06);
+  color:rgba(255,255,255,.75);
+  font-size:14px;font-weight:600;font-family:var(--disp);
+  transition:all .2s var(--ease);display:inline-flex;align-items:center;gap:8px;
+}
+.btn-login-hero:hover{border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.12);color:#fff}
 .hero-badges{
   margin-top:56px;display:flex;gap:32px;flex-wrap:wrap;
   border-top:1px solid rgba(255,255,255,.08);padding-top:32px;
@@ -313,7 +322,7 @@ footer{
     <a href="#services">Services</a>
     <a href="#about">À propos</a>
     <a href="#contact">Contact</a>
-    <a href="/app" class="nav-cta">Espace équipe</a>
+    <a href="/connexion" class="nav-cta">Se connecter</a>
   </div>
   <button class="hamburger" onclick="this.nextElementSibling.classList.toggle('open')" aria-label="Menu">
     <span></span><span></span><span></span>
@@ -338,6 +347,10 @@ footer{
     <div class="hero-actions">
       <a href="#contact" class="btn-primary">Demander un devis</a>
       <a href="#services" class="btn-ghost">Voir nos services</a>
+      <a href="/connexion" class="btn-login-hero">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        Espace équipe
+      </a>
     </div>
     <div class="hero-badges">
       <div class="badge-item"><div class="badge-v">18</div><div class="badge-l">ans d'expérience</div></div>

@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Connexion — Creatis Studio CRM</title>
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="icon" type="image/png" sizes="64x64" href="favicon-64.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+:root{
+  --noir:#1A1A1C;--cyan:#00AEEF;--mag:#EC008C;--jaune:#FFC400;
+  --carte:#FFFFFF;--txt:#1A1A1C;--txt-2:#5B5E66;--txt-3:#8A8E97;
+  --ligne:#E4E6EA;--papier:#F1F2F4;--danger:#E0444E;--ok:#1AA06A;
+  --disp:'Space Grotesk',sans-serif;--body:'Inter',sans-serif;
+  --r:12px;--r-sm:8px;--r-lg:20px;
+  --shadow-lg:0 24px 64px rgba(0,0,0,.32);
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;-webkit-font-smoothing:antialiased}
+body{
+  font-family:var(--body);
+  background:var(--noir);
+  color:var(--txt);
+  min-height:100vh;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  position:relative;overflow:hidden;
+}
+
+/* ── Fond animé CMJN ── */
+.bg-circles{position:fixed;inset:0;pointer-events:none;z-index:0}
+.bg-circles svg{width:100%;height:100%}
+@keyframes slowspin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+.bg-circles .ring1{animation:slowspin 80s linear infinite;transform-origin:center}
+.bg-circles .ring2{animation:slowspin 60s linear infinite reverse;transform-origin:center}
+.bg-circles .ring3{animation:slowspin 100s linear infinite;transform-origin:center}
+
+/* Gradient overlay */
+.bg-circles::after{
+  content:'';position:absolute;inset:0;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(0,174,239,.18), transparent 50%),
+    radial-gradient(circle at 85% 80%, rgba(236,0,140,.15), transparent 50%),
+    radial-gradient(circle at 50% 50%, rgba(255,196,0,.08), transparent 60%);
+}
+
+/* ── Retour ── */
+.back-link{
+  position:fixed;top:24px;left:28px;z-index:10;
+  display:flex;align-items:center;gap:8px;
+  color:rgba(255,255,255,.55);font-size:13px;font-weight:500;
+  text-decoration:none;transition:color .2s;
+}
+.back-link:hover{color:#fff}
+.back-link svg{flex:0 0 auto}
+
+/* ── Card ── */
+.card{
+  position:relative;z-index:1;
+  width:min(420px,92vw);
+  background:var(--carte);
+  border-radius:var(--r-lg);
+  overflow:hidden;
+  box-shadow:var(--shadow-lg);
+  animation:cardIn .5s var(--ease) both;
+}
+@keyframes cardIn{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
+
+/* CMJN bar */
+.cmyk-bar{height:5px;display:flex}
+.cmyk-bar span{flex:1}
+.cmyk-bar span:nth-child(1){background:var(--cyan)}
+.cmyk-bar span:nth-child(2){background:var(--mag)}
+.cmyk-bar span:nth-child(3){background:var(--jaune)}
+.cmyk-bar span:nth-child(4){background:#000}
+
+/* Card body */
+.card-body{padding:36px 36px 40px}
+
+/* Brand */
+.brand{display:flex;align-items:center;gap:13px;margin-bottom:30px}
+.brand-text .name{font-family:var(--disp);font-size:17px;font-weight:700;letter-spacing:.02em;color:var(--noir)}
+.brand-text .sub{font-size:9.5px;letter-spacing:.44em;text-transform:uppercase;color:var(--txt-3);font-weight:600;margin-top:2px}
+
+/* Heading */
+.card-title{font-family:var(--disp);font-size:24px;font-weight:700;color:var(--noir);margin-bottom:6px;letter-spacing:-.01em}
+.card-sub{font-size:13.5px;color:var(--txt-2);margin-bottom:28px;line-height:1.5}
+
+/* Form */
+.field{margin-bottom:16px}
+.field label{
+  display:block;font-size:11px;font-weight:700;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--txt-2);margin-bottom:7px;
+}
+.field input{
+  width:100%;padding:12px 14px;border:1.5px solid var(--ligne);
+  border-radius:var(--r-sm);outline:none;font-size:14.5px;font-family:var(--body);
+  background:var(--papier);color:var(--txt);transition:border .15s,box-shadow .15s;
+}
+.field input:focus{
+  border-color:var(--cyan);background:#fff;
+  box-shadow:0 0 0 3px rgba(0,174,239,.13);
+}
+.field input::placeholder{color:var(--txt-3)}
+
+/* Error */
+.err{
+  min-height:36px;padding:0 0 14px;
+  font-size:13px;color:var(--danger);font-weight:500;
+  display:flex;align-items:center;gap:7px;
+}
+.err svg{flex:0 0 auto;opacity:.8}
+
+/* Button */
+.btn-login{
+  width:100%;padding:14px;border-radius:var(--r-sm);
+  background:var(--noir);color:#fff;
+  font-family:var(--disp);font-size:15px;font-weight:700;
+  border:none;cursor:pointer;
+  transition:background .2s,transform .15s var(--ease);
+  display:flex;align-items:center;justify-content:center;gap:10px;
+}
+.btn-login:hover:not(:disabled){background:#000;transform:translateY(-1px)}
+.btn-login:active{transform:none}
+.btn-login:disabled{opacity:.6;cursor:not-allowed}
+.btn-login .spinner{
+  width:18px;height:18px;border:2.5px solid rgba(255,255,255,.3);
+  border-top-color:#fff;border-radius:50%;
+  animation:spin .7s linear infinite;display:none;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.btn-login.loading .spinner{display:block}
+.btn-login.loading .btn-txt{opacity:.7}
+
+/* Footer note */
+.card-foot{
+  margin-top:24px;padding-top:20px;border-top:1px solid var(--ligne);
+  font-size:11.5px;color:var(--txt-3);text-align:center;line-height:1.6;
+}
+
+/* Success state */
+.success-overlay{
+  position:absolute;inset:0;background:var(--carte);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:14px;opacity:0;pointer-events:none;transition:opacity .3s;z-index:2;
+}
+.success-overlay.show{opacity:1;pointer-events:auto}
+.success-icon{
+  width:56px;height:56px;border-radius:50%;background:#e3f6ec;
+  display:flex;align-items:center;justify-content:center;
+}
+.success-icon svg{color:var(--ok)}
+.success-msg{font-family:var(--disp);font-size:18px;font-weight:700;color:var(--noir)}
+.success-sub{font-size:13px;color:var(--txt-2)}
+  </style>
+</head>
+<body>
+
+<!-- Fond CMJN animé -->
+<div class="bg-circles">
+  <svg viewBox="0 0 1200 800" fill="none" preserveAspectRatio="xMidYMid slice">
+    <g class="ring1">
+      <circle cx="900" cy="200" r="320" stroke="#FFC400" stroke-width="80" stroke-dasharray="600 1600" opacity=".12"/>
+    </g>
+    <g class="ring2">
+      <circle cx="300" cy="600" r="280" stroke="#EC008C" stroke-width="70" stroke-dasharray="500 1400" opacity=".10"/>
+    </g>
+    <g class="ring3">
+      <circle cx="700" cy="500" r="240" stroke="#00AEEF" stroke-width="60" stroke-dasharray="420 1300" opacity=".10"/>
+    </g>
+  </svg>
+</div>
+
+<!-- Lien retour -->
+<a href="/" class="back-link">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+    <path d="M19 12H5M12 5l-7 7 7 7"/>
+  </svg>
+  Retour au site
+</a>
+
+<!-- Card -->
+<div class="card">
+  <div class="cmyk-bar"><span></span><span></span><span></span><span></span></div>
+  <div class="card-body">
+
+    <!-- Logo -->
+    <div class="brand">
+      <svg width="38" height="38" viewBox="0 0 40 40" fill="none">
+        <circle cx="20" cy="20" r="16" stroke="#FFC400" stroke-width="3.4" stroke-dasharray="58 90" transform="rotate(-30 20 20)"/>
+        <circle cx="20" cy="20" r="12.5" stroke="#EC008C" stroke-width="3.4" stroke-dasharray="44 90" transform="rotate(110 20 20)"/>
+        <circle cx="20" cy="20" r="12.5" stroke="#00AEEF" stroke-width="3.4" stroke-dasharray="40 120" transform="rotate(-110 20 20)"/>
+        <text x="20" y="26" font-family="Space Grotesk,sans-serif" font-size="17" font-weight="700" fill="#1A1A1C" text-anchor="middle">C</text>
+      </svg>
+      <div class="brand-text">
+        <div class="name">CREATIS STUDIO</div>
+        <div class="sub">Espace équipe</div>
+      </div>
+    </div>
+
+    <!-- Titre -->
+    <div class="card-title">Connexion</div>
+    <div class="card-sub">Accès réservé à l'équipe Creatis Studio.</div>
+
+    <!-- Formulaire -->
+    <form id="login-form" onsubmit="return false">
+      <div class="field">
+        <label>Identifiant</label>
+        <input id="f-login" type="text" placeholder="Votre identifiant" autocomplete="username" required autofocus>
+      </div>
+      <div class="field">
+        <label>Mot de passe</label>
+        <input id="f-pwd" type="password" placeholder="••••••••••" autocomplete="current-password" required>
+      </div>
+
+      <div class="err" id="err-msg" style="display:none">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span id="err-txt"></span>
+      </div>
+
+      <button class="btn-login" id="btn-login" type="submit" onclick="doLogin()">
+        <div class="spinner"></div>
+        <span class="btn-txt">Se connecter</span>
+        <svg class="btn-arrow" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <path d="M5 12h14M12 5l7 7-7 7"/>
+        </svg>
+      </button>
+    </form>
+
+    <div class="card-foot">
+      Accès sécurisé · Données chiffrées<br>
+      Problème de connexion ? Contactez l'administrateur.
+    </div>
+
+  </div>
+
+  <!-- Overlay succès -->
+  <div class="success-overlay" id="success">
+    <div class="success-icon">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+    </div>
+    <div class="success-msg">Connexion réussie</div>
+    <div class="success-sub">Redirection en cours…</div>
+  </div>
+</div>
+
+<!-- Supabase + Config -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="app/js/config.js"></script>
+<script>
+"use strict";
+const SESSION_KEY = "creatis_session_v2";
+
+// Supabase client
+let SB = null;
+try {
+  if (typeof SUPABASE_URL !== "undefined" && !SUPABASE_URL.includes("VOTRE-ID")) {
+    SB = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  }
+} catch(e) {}
+
+// SHA-256 — identique à app.js
+async function passHash(login, pwd) {
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode("creatis::v2::" + login.toLowerCase() + "::" + pwd)
+  );
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function showErr(msg) {
+  const box = document.getElementById("err-msg");
+  const txt = document.getElementById("err-txt");
+  txt.textContent = msg;
+  box.style.display = "flex";
+}
+function hideErr() { document.getElementById("err-msg").style.display = "none"; }
+
+async function doLogin() {
+  const btn  = document.getElementById("btn-login");
+  const login = document.getElementById("f-login").value.trim().toLowerCase();
+  const pwd   = document.getElementById("f-pwd").value;
+
+  if (!login || !pwd) { showErr("Remplissez tous les champs."); return; }
+  hideErr();
+
+  // État chargement
+  btn.disabled = true;
+  btn.classList.add("loading");
+  btn.querySelector(".btn-arrow").style.display = "none";
+
+  try {
+    if (!SB) {
+      showErr("Connexion Supabase impossible. Vérifiez config.js.");
+      return;
+    }
+
+    // Charger les utilisateurs depuis Supabase
+    const { data: users, error } = await SB.from("profiles").select("*");
+    if (error) { showErr("Erreur Supabase : " + (error.message || "connexion impossible")); return; }
+    if (!users || !users.length) { showErr("Aucun compte trouvé. Exécutez le SQL de migration."); return; }
+
+    // Trouver l'utilisateur
+    const user = users.find(u => (u.login || "").toLowerCase() === login && u.active !== false);
+    if (!user) { showErr("Identifiant ou mot de passe incorrect."); return; }
+
+    // Vérifier le mot de passe
+    const hash = await passHash(user.login, pwd);
+    if (user.pass !== hash) { showErr("Identifiant ou mot de passe incorrect."); return; }
+
+    // Succès — stocker la session
+    try { localStorage.setItem(SESSION_KEY, user.id); } catch(e) {}
+
+    // Afficher l'overlay succès
+    document.getElementById("success").classList.add("show");
+
+    // Rediriger vers le CRM
+    setTimeout(() => { window.location.href = "/app/"; }, 900);
+
+  } catch(e) {
+    showErr("Erreur inattendue. Rechargez la page.");
+    console.error(e);
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove("loading");
+    btn.querySelector(".btn-arrow").style.display = "";
+  }
+}
+
+// Submit sur Entrée
+document.getElementById("login-form").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); doLogin(); }
+});
+
+// Si déjà connecté → rediriger directement
+(async function checkSession() {
+  try {
+    const sid = localStorage.getItem(SESSION_KEY);
+    if (!sid || !SB) return;
+    const { data } = await SB.from("profiles").select("id,active").eq("id", sid).maybeSingle();
+    if (data && data.active !== false) { window.location.href = "/app/"; }
+  } catch(e) {}
+})();
+</script>
+</body>
+</html>
