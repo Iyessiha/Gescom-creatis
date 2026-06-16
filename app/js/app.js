@@ -318,7 +318,24 @@ function tableMini(rows,fn,empty){if(!rows.length)return`<div class="empty-sm">$
    Auth : header DOLAPIKEY
    ============================================================ */
 const DOL_KEY = "creatis_dolibarr_config";
-function getDolConfig(){ try{return JSON.parse(localStorage.getItem(DOL_KEY)||"{}")}catch(e){return {}} }
+function getDolConfig(){
+  try{
+    const stored = JSON.parse(localStorage.getItem(DOL_KEY)||"{}");
+    // Valeurs pré-configurées (modifiables dans l'interface)
+    if(!stored.url)     stored.url     = "https://gestion.creatisci.com";
+    if(!stored.apiKey)  stored.apiKey  = "EXrojMRo4I176465trb3Es8gj3UWuRUP";
+    if(!stored.conflict)stored.conflict= "skip";
+    if(!stored.clientMode) stored.clientMode = "0";
+    if(!stored.productType)stored.productType= "all";
+    return stored;
+  }catch(e){
+    return {
+      url:"https://gestion.creatisci.com",
+      apiKey:"EXrojMRo4I176465trb3Es8gj3UWuRUP",
+      conflict:"skip",clientMode:"0",productType:"all"
+    };
+  }
+}
 function saveDolConfig(c){ try{localStorage.setItem(DOL_KEY,JSON.stringify(c))}catch(e){} }
 
 function viewDokira(){
