@@ -404,7 +404,7 @@ function viewDashboard(){
    ============================================================ */
 function viewClients(){
   if(!vis("clients"))return;
-  $("#pg-actions").innerHTML=`<button class="btn btn-primary act-edit" onclick="editClient()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouveau contact</button>`;
+  $("#pg-actions").innerHTML=`<button class="btn" onclick="exportExcel('clients')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editClient()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouveau contact</button>`;
   const segs=["PME","Start-up","Collectivité","Grand compte"];const sources=["Bouche-à-oreille","LinkedIn","Salon/événement","Webinaire","Appel d'offres","Site web","Autre"];
   const q=(clientSearch||"").toLowerCase();
   const list=DB.clients.filter(c=>!q||c.nom.toLowerCase().includes(q)||(c.contact||"").toLowerCase().includes(q)||(c.email||"").toLowerCase().includes(q));
@@ -472,7 +472,7 @@ function viewFactures(){docList("factures")}
 function docList(kind){
   if(!vis(kind))return;
   const isF=kind==="factures";const list=DB[kind];
-  $("#pg-actions").innerHTML=`<button class="btn btn-primary act-edit" onclick="editDoc('${kind}')"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${isF?"Nouvelle facture":"Nouveau devis"}</button>`;
+  $("#pg-actions").innerHTML=`<button class="btn" onclick="exportExcel('${kind}')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editDoc('${kind}')"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${isF?"Nouvelle facture":"Nouveau devis"}</button>`;
   if(!list.length){$("#view").innerHTML=emptyState(isF?"Aucune facture":"Aucun devis","",isF?"Nouvelle facture":"Nouveau devis",`editDoc('${kind}')`);return}
   $("#view").innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Numéro</th><th>Client</th><th>Date</th><th>${isF?"Échéance":"Validité"}</th><th class="r">Total TTC</th><th>Statut</th><th></th></tr></thead><tbody>
     ${list.map(d=>`<tr class="clk" onclick="${isF?`openFacture`:`openDevis`}('${d.id}')">
@@ -628,7 +628,7 @@ function printDoc(kind,id){
 const CMD_FLOW=[["devis","Devis"],["production","Production"],["controle","Contrôle Q."],["livré","Livré"],["facturé","Facturé"]];
 function viewCommandes(){
   if(!vis("commandes"))return;
-  $("#pg-actions").innerHTML=`<button class="btn btn-primary act-edit" onclick="editCmd()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouvelle commande</button>`;
+  $("#pg-actions").innerHTML=`<button class="btn" onclick="exportExcel('commandes')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editCmd()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouvelle commande</button>`;
   if(!DB.commandes.length){$("#view").innerHTML=emptyState("Aucune commande","Créez votre première commande.","Nouvelle commande","editCmd()");return}
   const cols=CMD_FLOW.map(([k,l])=>({k,l,items:DB.commandes.filter(c=>c.statut===k)}));
   $("#view").innerHTML=`<div class="kanban">${cols.map(col=>`
@@ -683,7 +683,7 @@ function delCmd(id){if(!guard("commandes"))return;confirmModal("Supprimer cette 
    ============================================================ */
 function viewCompta(){
   if(!vis("compta"))return;
-  $("#pg-actions").innerHTML=`<button class="btn btn-primary act-edit" onclick="editDepense()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouvelle dépense</button>`;
+  $("#pg-actions").innerHTML=`<button class="btn" onclick="exportExcel('depenses')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editDepense()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouvelle dépense</button>`;
   const now=new Date(),m=now.getMonth(),y=now.getFullYear();
   let tvaColl=0,tvaDed=0,recettes=0,depTTC=0,depHT=0;
   DB.factures.forEach(f=>{const paid=factPaid(f);if(paid>0&&f.montantTTC){tvaColl+=f.montantTVA*(paid/f.montantTTC);recettes+=paid}});
@@ -743,7 +743,7 @@ function delDepense(id){if(!guard("compta"))return;confirmModal("Supprimer cette
    ============================================================ */
 function viewCatalogue(){
   if(!vis("catalogue"))return;
-  $("#pg-actions").innerHTML=`<button class="btn btn-primary act-edit" onclick="editProduct()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouveau produit</button>`;
+  $("#pg-actions").innerHTML=`<button class="btn" onclick="exportExcel('catalogue')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editProduct()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouveau produit</button>`;
   if(!DB.products.length){$("#view").innerHTML=emptyState("Catalogue vide","Ajoutez vos produits et tarifs.","Nouveau produit","editProduct()");return}
   const cats=[...new Set(DB.products.map(p=>p.categorie||"Autre"))].sort();
   $("#view").innerHTML=cats.map(cat=>{const prods=DB.products.filter(p=>(p.categorie||"Autre")===cat);return`<div class="card" style="margin-bottom:16px"><div class="panel-h" style="padding:14px 16px 10px"><h3 style="font-size:13px;color:var(--txt-2)">${esc(cat)}</h3></div><div style="overflow-x:auto"><table><thead><tr><th>Désignation</th><th class="r">Prix unitaire</th><th>Unité</th><th></th></tr></thead><tbody>${prods.map(p=>`<tr><td class="nm">${esc(p.designation)}</td><td class="r tabnum">${fcfa(p.pu)}</td><td class="meta">${esc(p.unite)}</td><td class="r"><button class="btn btn-sm btn-ghost act-edit" onclick="editProduct('${p.id}')">Modifier</button></td></tr>`).join("")}</tbody></table></div></div>`}).join("");
@@ -799,7 +799,10 @@ function viewParametres(){
   </div>
   <div class="card panel" style="margin-top:16px"><div class="panel-h"><h3>Sauvegarde</h3></div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
-      <button class="btn" onclick="exportData()"><svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Exporter (.json)</button>
+      <button class="btn btn-primary" onclick="exportExcel('all')" style="background:#1D6F42;border-color:#1D6F42;color:#fff">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>
+          Exporter tout (Excel)</button>
+        <button class="btn" onclick="exportData()"><svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Sauvegarde (.json)</button>
       <label class="btn" style="cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 21V9M7 14l5-5 5 5M5 3h14"/></svg>Importer<input type="file" accept=".json" style="display:none" onchange="importData(this)"></label>
     </div>
   </div>
@@ -818,6 +821,210 @@ function saveSettings(){
   sync("settings",DB.settings);
   toast("Paramètres enregistrés");
 }
+
+/* ============================================================
+   EXPORT EXCEL (SheetJS)
+   ============================================================ */
+
+// Largeurs de colonnes helpers
+const COL = {
+  id:6, date:12, num:16, nom:28, contact:20, type:10,
+  seg:14, tel:14, email:26, adr:34, src:16, notes:40,
+  statut:12, montant:16, taux:8, ref:20, titre:30,
+  cat:16, pu:14, unite:10, qty:8, lab:26, fournisseur:20,
+};
+
+function _ws(data, cols){
+  if(!data.length) return XLSX.utils.json_to_sheet([{"(vide)":"Aucune donnée"}]);
+  const ws = XLSX.utils.json_to_sheet(data, {cellDates:true});
+  // Largeurs colonnes
+  const keys = Object.keys(data[0]);
+  ws["!cols"] = keys.map(k => {
+    const match = cols?.[k];
+    return {wch: match || Math.min(Math.max(k.length+2, 10), 40)};
+  });
+  // Figer la première ligne (en-têtes)
+  ws["!freeze"] = {xSplit:0, ySplit:1};
+  return ws;
+}
+
+// ── Feuille Clients ──
+function _sheetClients(){
+  return _ws(DB.clients.map(c => ({
+    "Nom / Entreprise"  : c.nom || "",
+    "Interlocuteur"     : c.contact || "",
+    "Type"              : c.type === "client" ? "Client" : "Prospect",
+    "Segment"           : c.segment || "",
+    "Téléphone"         : c.tel || "",
+    "Email"             : c.email || "",
+    "Adresse"           : c.adresse || "",
+    "Source"            : c.source || "",
+    "Notes"             : c.notes || "",
+    "Date création"     : fdate(c.createdAt||c.created_at),
+  })), {
+    "Nom / Entreprise":28,"Interlocuteur":20,"Type":10,"Segment":14,
+    "Téléphone":14,"Email":28,"Adresse":34,"Source":16,"Notes":40,"Date création":14
+  });
+}
+
+// ── Feuille Devis ──
+function _sheetDevis(){
+  return _ws(DB.devis.map(d => ({
+    "Numéro"          : d.numero || "",
+    "Client"          : clientName(d.clientId),
+    "Date"            : fdate(d.date),
+    "Validité"        : fdate(d.validite),
+    "Statut"          : d.statut || "",
+    "Montant HT (F)"  : d.montantHT || 0,
+    "TVA 18% (F)"     : d.montantTVA || 0,
+    "Total TTC (F)"   : d.montantTTC || 0,
+    "Lignes (nb)"     : (d.lignes||[]).length,
+    "Notes"           : d.notes || "",
+  })), {
+    "Numéro":16,"Client":28,"Date":12,"Validité":12,"Statut":12,
+    "Montant HT (F)":16,"TVA 18% (F)":14,"Total TTC (F)":16,"Lignes (nb)":10,"Notes":30
+  });
+}
+
+// ── Feuille Factures ──
+function _sheetFactures(){
+  return _ws(DB.factures.map(f => {
+    const paid = factPaid(f);
+    return {
+      "Numéro"            : f.numero || "",
+      "Client"            : clientName(f.clientId),
+      "Date"              : fdate(f.date),
+      "Échéance"          : fdate(f.echeance),
+      "Statut"            : factStatut(f),
+      "Montant HT (F)"    : f.montantHT || 0,
+      "TVA 18% (F)"       : f.montantTVA || 0,
+      "Total TTC (F)"     : f.montantTTC || 0,
+      "Payé (F)"          : paid,
+      "Reste à régler (F)": Math.max(0, (f.montantTTC||0) - paid),
+      "Nb paiements"      : (f.paiements||[]).length,
+      "Notes"             : f.notes || "",
+    };
+  }), {
+    "Numéro":16,"Client":28,"Date":12,"Échéance":12,"Statut":12,
+    "Montant HT (F)":16,"TVA 18% (F)":14,"Total TTC (F)":16,
+    "Payé (F)":14,"Reste à régler (F)":18,"Nb paiements":12,"Notes":30
+  });
+}
+
+// ── Feuille Commandes ──
+function _sheetCommandes(){
+  return _ws(DB.commandes.map(c => ({
+    "Numéro"      : c.numero || "",
+    "Titre"       : c.titre || "",
+    "Client"      : clientName(c.clientId),
+    "Statut"      : c.statut || "",
+    "Deadline"    : fdate(c.deadline),
+    "Devis lié"   : c.devisId ? (DB.devis.find(d=>d.id===c.devisId)||{}).numero||"" : "",
+    "En retard"   : (c.deadline && new Date(c.deadline)<new Date() && !["livré","facturé"].includes(c.statut)) ? "Oui" : "Non",
+    "Notes"       : c.notes || "",
+  })), {
+    "Numéro":14,"Titre":30,"Client":26,"Statut":12,
+    "Deadline":12,"Devis lié":16,"En retard":10,"Notes":30
+  });
+}
+
+// ── Feuille Dépenses ──
+function _sheetDepenses(){
+  return _ws(DB.depenses.map(d => ({
+    "Date"          : fdate(d.date),
+    "Libellé"       : d.libelle || "",
+    "Catégorie"     : d.categorie || "",
+    "Fournisseur"   : d.fournisseur || "",
+    "Montant HT (F)": d.ht || 0,
+    "TVA (F)"       : d.tva || 0,
+    "Total TTC (F)" : d.ttc || 0,
+  })), {
+    "Date":12,"Libellé":30,"Catégorie":18,"Fournisseur":22,
+    "Montant HT (F)":16,"TVA (F)":12,"Total TTC (F)":16
+  });
+}
+
+// ── Feuille Catalogue ──
+function _sheetCatalogue(){
+  return _ws(DB.products.map(p => ({
+    "Désignation"       : p.designation || "",
+    "Catégorie"         : p.categorie || "",
+    "Prix unitaire HT"  : p.pu || 0,
+    "Unité"             : p.unite || "",
+    "Prix TTC (18%)"    : Math.round((p.pu||0)*1.18),
+  })), {
+    "Désignation":32,"Catégorie":16,"Prix unitaire HT":18,"Unité":10,"Prix TTC (18%)":16
+  });
+}
+
+// ── Feuille Résumé comptable ──
+function _sheetCompta(){
+  let totalEncaisse=0, totalHT=0, totalTVA=0, totalDepenses=0, totalTVADed=0;
+  DB.factures.forEach(f=>{
+    const paid=factPaid(f);
+    totalEncaisse+=paid;
+    if(paid>0&&f.montantTTC){ totalTVA+=f.montantTVA*(paid/f.montantTTC); }
+    totalHT+=f.montantHT||0;
+  });
+  DB.depenses.forEach(d=>{ totalDepenses+=d.ttc||0; totalTVADed+=d.tva||0; });
+  const rows = [
+    {"Indicateur":"Chiffre d'affaires HT (total)","Montant (F)": Math.round(totalHT),"Note":"Somme des factures émises HT"},
+    {"Indicateur":"Encaissements","Montant (F)": Math.round(totalEncaisse),"Note":"Paiements effectivement reçus"},
+    {"Indicateur":"Reste à encaisser","Montant (F)": Math.round(DB.factures.reduce((s,f)=>s+Math.max(0,(f.montantTTC||0)-factPaid(f)),0)),"Note":"Factures impayées ou partielles"},
+    {"Indicateur":"TVA collectée","Montant (F)": Math.round(totalTVA),"Note":"Sur encaissements"},
+    {"Indicateur":"TVA déductible (achats)","Montant (F)": Math.round(totalTVADed),"Note":"Sur dépenses"},
+    {"Indicateur":"TVA nette à reverser","Montant (F)": Math.round(totalTVA-totalTVADed),"Note":"Collectée - Déductible"},
+    {"Indicateur":"Total dépenses TTC","Montant (F)": Math.round(totalDepenses),"Note":"Charges déclarées"},
+    {"Indicateur":"Résultat (encaissements - dépenses)","Montant (F)": Math.round(totalEncaisse-totalDepenses),"Note":"Indicatif"},
+  ];
+  return _ws(rows,{"Indicateur":38,"Montant (F)":16,"Note":40});
+}
+
+// ── Export GLOBAL (toutes feuilles) ──
+function exportExcel(scope){
+  scope = scope || "all";
+  const wb = XLSX.utils.book_new();
+  const co = DB.settings?.company||{};
+  const now = new Date().toLocaleDateString("fr-FR");
+
+  if(scope==="all"||scope==="clients")   XLSX.utils.book_append_sheet(wb, _sheetClients(),   "Clients");
+  if(scope==="all"||scope==="devis")     XLSX.utils.book_append_sheet(wb, _sheetDevis(),     "Devis");
+  if(scope==="all"||scope==="factures")  XLSX.utils.book_append_sheet(wb, _sheetFactures(),  "Factures");
+  if(scope==="all"||scope==="commandes") XLSX.utils.book_append_sheet(wb, _sheetCommandes(), "Commandes");
+  if(scope==="all"||scope==="depenses")  XLSX.utils.book_append_sheet(wb, _sheetDepenses(),  "Dépenses");
+  if(scope==="all"||scope==="catalogue") XLSX.utils.book_append_sheet(wb, _sheetCatalogue(), "Catalogue");
+  if(scope==="all") {
+    XLSX.utils.book_append_sheet(wb, _sheetCompta(), "Résumé comptable");
+    // Feuille info
+    const info = XLSX.utils.aoa_to_sheet([
+      ["Creatis Studio — Export CRM"],[""],
+      ["Société", co.name||"Creatis Studio"],
+      ["RC", co.rc||"CI-ABJ-2007-B-3172"],
+      ["CC", co.cc||"0811105V"],
+      ["Date d'export", now],
+      ["Devise", "Franc CFA (XOF)"],
+      ["TVA", "18%"],[""],
+      ["Feuilles incluses",""],
+      ["Clients","Tous les clients et prospects"],
+      ["Devis","Devis émis"],
+      ["Factures","Factures avec détail paiements"],
+      ["Commandes","Suivi des commandes Kanban"],
+      ["Dépenses","Journal des charges"],
+      ["Catalogue","Produits et tarifs"],
+      ["Résumé comptable","Synthèse TVA et résultats"],
+    ]);
+    info["!cols"]=[{wch:22},{wch:40}];
+    XLSX.utils.book_append_sheet(wb, info, "ℹ️ Infos");
+  }
+
+  const filename = scope==="all"
+    ? `creatis-crm-complet-${todayISO()}.xlsx`
+    : `creatis-${scope}-${todayISO()}.xlsx`;
+
+  XLSX.writeFile(wb, filename);
+  toast(`✅ Export Excel "${filename}" téléchargé`);
+}
+
 function exportData(){
   const blob=new Blob([JSON.stringify({settings:DB.settings,roles:DB.roles,users:DB.users,clients:DB.clients,products:DB.products,devis:DB.devis,factures:DB.factures,commandes:DB.commandes,depenses:DB.depenses},null,2)],{type:"application/json"});
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="creatis-crm-backup-"+todayISO()+".json";a.click();toast("Sauvegarde exportée");
