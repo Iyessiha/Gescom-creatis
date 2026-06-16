@@ -429,33 +429,93 @@ function saveDolConflict(v){const c=getDolConfig();c.conflict=v;saveDolConfig(c)
 async function dolFetch(path,params={}){
   const cfg=getDolConfig();
   if(!cfg.url||!cfg.apiKey) throw new Error("URL et clé API requises — enregistrez d'abord.");
+  const base=cfg.url.replace(/\/+$/,"");
   const qs=new URLSearchParams({limit:500,page:0,...params}).toString();
-  const url=`${cfg.url}/api/index.php${path}?${qs}`;
-  const resp=await fetch(url,{headers:{"DOLAPIKEY":cfg.apiKey,"Accept":"application/json"},mode:"cors"});
-  if(resp.status===401) throw new Error("Clé API invalide (401).");
-  if(resp.status===403) throw new Error("Accès refusé — vérifiez les droits de l'utilisateur (403).");
-  if(!resp.ok){const t=await resp.text().catch(()=>"");throw new Error(`HTTP ${resp.status} — ${t.slice(0,100)}`);}
-  const data=await resp.json();
-  return Array.isArray(data)?data:(data.data||data.items||[data]);
+  // Essayer plusieurs chemins API courants
+  const paths=[
+    `${base}/api/index.php${path}?${qs}`,
+    `${base}/htdocs/api/index.php${path}?${qs}`,
+    `${base}/dolibarr/api/index.php${path}?${qs}`,
+  ];
+  let lastErr="";
+  for(const url of paths){
+    try{
+      const resp=await fetch(url,{
+        headers:{"DOLAPIKEY":cfg.apiKey,"Authorization":`Bearer ${cfg.apiKey}`,"Accept":"application/json"},
+        mode:"cors",
+      });
+      if(resp.status===401) throw new Error("Clé API invalide (401) — vérifiez la clé dans Dolibarr.");
+      if(resp.status===403) throw new Error("Accès refusé (403) — activez le module API REST dans Dolibarr.");
+      if(!resp.ok){ const t=await resp.text().catch(()=>""); throw new Error(`HTTP ${resp.status} sur ${url}\n${t.slice(0,200)}`); }
+      const txt=await resp.text();
+      // Vérifier que c'est bien du JSON
+      if(!txt.trim().startsWith("[")&&!txt.trim().startsWith("{")){
+        throw new Error(`Réponse non-JSON (HTML ?)\nDébut : ${txt.slice(0,120)}`);
+      }
+      const data=JSON.parse(txt);
+      // Mémoriser le chemin qui marche
+      const workingBase=url.replace(new RegExp(`\/api\/index\.php${path}.*`),"");
+      if(workingBase!==cfg.url){
+        cfg.url=workingBase; saveDolConfig(cfg);
+        console.log("Chemin API trouvé :",workingBase);
+      }
+      return Array.isArray(data)?data:(data.data||data.items||[data]);
+    }catch(e){ lastErr=e.message; }
+  }
+  throw new Error(lastErr||"Connexion impossible — vérifiez URL, clé et que l'API REST est activée.");
 }
 
 async function dolTest(){
   saveDolSettings();
   const s=document.getElementById("dol-status");
-  if(s)s.innerHTML=`⏳ Connexion à Dolibarr…`;
+  if(s)s.innerHTML=`⏳ Test de connexion en cours… (3 chemins testés)`;
+  // D'abord tester la version Dolibarr (endpoint public)
+  const cfg=getDolConfig();
+  const base=cfg.url.replace(/\/+$/,"");
+  const testPaths=[
+    base+"/api/index.php/version",
+    base+"/htdocs/api/index.php/version",
+    base+"/dolibarr/api/index.php/version",
+  ];
+  let versionInfo="";
+  for(const vp of testPaths){
+    try{
+      const r=await fetch(vp,{headers:{"DOLAPIKEY":cfg.apiKey,"Accept":"application/json"},mode:"cors"});
+      const txt=await r.text();
+      if(txt.includes("dolibarr_version")||txt.includes("version")){
+        versionInfo=`✅ API Dolibarr détectée sur : <code>${vp.replace("/version","")}</code>`;
+        // Mémoriser le bon chemin de base
+        const goodBase=vp.replace("/api/index.php/version","");
+        if(goodBase!==cfg.url){ cfg.url=goodBase; saveDolConfig(cfg); document.getElementById("dol-url").value=goodBase; }
+        break;
+      }
+    }catch(e){}
+  }
   try{
     const rows=await dolFetch("/thirdparties",{limit:3});
     const sample=rows[0]||{};
     const fields=Object.keys(sample).filter(k=>sample[k]!=null).slice(0,12).join(", ");
-    if(s)s.innerHTML=`<span style="color:var(--ok);font-weight:600">✅ Connexion réussie — ${rows.length} tiers récupérés (aperçu 3)</span>
-      <div style="margin-top:5px;font-size:11px;color:var(--txt-2)">Champs : <strong>${esc(fields)}…</strong></div>
+    if(s)s.innerHTML=`<span style="color:var(--ok);font-weight:700;font-size:14px">✅ Connexion réussie !</span>
+      ${versionInfo?`<div style="margin-top:4px;font-size:11px">${versionInfo}</div>`:""}
+      <div style="margin-top:5px;font-size:11px;color:var(--txt-2)">Champs disponibles : <strong>${esc(fields)}…</strong></div>
       <pre style="margin-top:6px;font-size:10px;background:#f5f5f7;padding:8px;border-radius:4px;overflow-x:auto;max-height:130px">${esc(JSON.stringify(sample,null,2).slice(0,800))}</pre>`;
     toast("✅ Dolibarr connecté !");
   }catch(e){
-    if(s)s.innerHTML=`<span style="color:var(--danger);font-weight:600">❌ ${esc(e.message)}</span>
-      <div style="margin-top:8px;font-size:12px;color:var(--txt-2)">
-        Si c'est une erreur CORS : activez CORS dans votre Dolibarr/Apache,<br>
-        ou utilisez l'import via fichier JSON (bouton ci-dessus).</div>`;
+    const msg=e.message||"";
+    const isCORS=msg.includes("Failed to fetch")||msg.includes("NetworkError")||msg.includes("CORS");
+    if(s)s.innerHTML=`<span style="color:var(--danger);font-weight:600">❌ ${esc(msg.slice(0,200))}</span>
+      ${isCORS?`<div style="margin-top:10px;padding:10px;background:#fff3e0;border-radius:6px;font-size:12px">
+        <strong>🔧 Erreur CORS — Solution :</strong><br>
+        Dans Dolibarr → <strong>Accueil → Configuration → Autres paramètres</strong><br>
+        Cherchez "MAIN_HTTP_ADDITIONAL_HEADER" ou "CORS" et ajoutez :<br>
+        <code style="background:#f5f5f7;padding:2px 6px;border-radius:3px">https://gescom-creatis.vercel.app</code><br><br>
+        Ou ajoutez dans votre .htaccess Dolibarr :<br>
+        <code style="font-size:10px;display:block;background:#f5f5f7;padding:6px;border-radius:3px;margin-top:4px">
+Header set Access-Control-Allow-Origin "*"\nHeader set Access-Control-Allow-Headers "DOLAPIKEY,Authorization,Content-Type"</code>
+      </div>`:`<div style="margin-top:8px;font-size:12px;color:var(--txt-2)">
+        Vérifiez : 1) URL correcte 2) Module API REST activé dans Dolibarr 3) Clé API valide
+      </div>`}
+      <button class="btn btn-sm" style="margin-top:10px" onclick="showDolFileImport()">📂 Contournement : importer via fichier JSON</button>`;
   }
 }
 
