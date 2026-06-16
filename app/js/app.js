@@ -230,7 +230,7 @@ async function doOnboard(){
   if(!name||!login||!pw){if(err)err.textContent="Remplissez tous les champs.";return}
   if(pw!==pw2){if(err)err.textContent="Les mots de passe ne correspondent pas.";return}
   if(err)err.textContent="Création…";
-  const u={id:uid(),name,login,roleId:"administrateur",active:true,pass:await passHash(login,pw),createdAt:Date.now()};
+  const u={id:uid(),name,login,roleId:"administrateur",active:true,pass:await passHash(login,pw),createdAt:new Date().toISOString()};
   const ok = await dbUpsert("profiles", u);
   if(!ok){if(err)err.textContent="Erreur de création. Vérifiez Supabase.";return}
   DB.users.push(u);
@@ -318,7 +318,14 @@ function todayISO(){return new Date().toISOString().slice(0,10)}
 function clientName(id){const c=DB.clients.find(x=>x.id===id);return c?c.nom:"—"}
 function esc(s){if(s==null||s===undefined)return"";return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
 function toast(msg,dur=2800){const t=$("#toast");if(!t)return;t.textContent=msg;t.classList.add("show");clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),dur)}
-function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
+function uid(){
+  // Génère un vrai UUID v4 compatible avec les colonnes `uuid` de Supabase
+  if(typeof crypto!=="undefined"&&crypto.randomUUID){return crypto.randomUUID()}
+  // Fallback pour les navigateurs anciens
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{
+    const r=Math.random()*16|0;return(c==="x"?r:(r&0x3|0x8)).toString(16);
+  });
+}
 function calcLignes(lignes,tvaRate){let ht=0;(lignes||[]).forEach(l=>ht+=((+l.qte||0)*(+l.pu||0))*(1-((+l.remise||0)/100)));const tv=ht*(tvaRate/100);return{montantHT:Math.round(ht),montantTVA:Math.round(tv),montantTTC:Math.round(ht+tv)}}
 function factPaid(f){return((f.paiements||[]).reduce((s,p)=>s+(+p.montant||0),0))}
 function factStatut(f){const p=factPaid(f);if(p<=0)return"impayée";if(p>=f.montantTTC)return"payée";return"partielle"}
@@ -479,7 +486,7 @@ function saveClient(id){
   const f=$("#f-client");const fd=new FormData(f);
   const nom=fd.get("nom")||"";if(!nom.trim()){toast("Nom obligatoire");return}
   if(id){const c=DB.clients.find(x=>x.id===id);Object.assign(c,{nom:nom.trim(),contact:fd.get("contact"),segment:fd.get("segment"),type:fd.get("type"),tel:fd.get("tel"),email:fd.get("email"),adresse:fd.get("adresse"),source:fd.get("source"),notes:fd.get("notes")});sync("clients",c);}
-  else{const c={id:uid(),nom:nom.trim(),contact:fd.get("contact"),segment:fd.get("segment"),type:fd.get("type"),tel:fd.get("tel"),email:fd.get("email"),adresse:fd.get("adresse"),source:fd.get("source"),notes:fd.get("notes"),createdAt:Date.now()};DB.clients.push(c);sync("clients",c);}
+  else{const c={id:uid(),nom:nom.trim(),contact:fd.get("contact"),segment:fd.get("segment"),type:fd.get("type"),tel:fd.get("tel"),email:fd.get("email"),adresse:fd.get("adresse"),source:fd.get("source"),notes:fd.get("notes"),createdAt:new Date().toISOString()};DB.clients.push(c);sync("clients",c);}
   closeOverlays();toast(id?"Contact mis à jour":"Contact créé");refreshBadges();go(current);
 }
 function delClient(id){if(!guard("clients"))return;confirmModal("Supprimer ce contact ?","Les devis et factures liés ne seront pas supprimés.",()=>{DB.clients=DB.clients.filter(x=>x.id!==id);syncDel("clients",id);closeOverlays();toast("Contact supprimé");refreshBadges();go("clients")})}
@@ -531,7 +538,7 @@ function devisToFacture(id){
   const dv=DB.devis.find(x=>x.id===id);
   const seq=DB.settings.seqFacture; const year=DB.settings.year;
   const num="FAC-"+year+"-"+String(seq).padStart(4,"0");
-  const f={id:uid(),numero:num,clientId:dv.clientId,devisId:dv.id,date:todayISO(),echeance:"",lignes:JSON.parse(JSON.stringify(dv.lignes)),tva:dv.tva,statut:"impayée",paiements:[],montantHT:dv.montantHT,montantTVA:dv.montantTVA,montantTTC:dv.montantTTC,notes:dv.notes,createdAt:Date.now()};
+  const f={id:uid(),numero:num,clientId:dv.clientId,devisId:dv.id,date:todayISO(),echeance:"",lignes:JSON.parse(JSON.stringify(dv.lignes)),tva:dv.tva,statut:"impayée",paiements:[],montantHT:dv.montantHT,montantTVA:dv.montantTVA,montantTTC:dv.montantTTC,notes:dv.notes,createdAt:new Date().toISOString()};
   DB.factures.push(f); DB.settings.seqFacture=seq+1;
   dv.statut="facturée"; sync("devis",dv); sync("factures",f); sync("settings",DB.settings);
   closeOverlays(); toast("Facture "+num+" créée"); refreshBadges(); go("factures"); setTimeout(()=>openFacture(f.id),200);
@@ -603,7 +610,7 @@ function saveDoc(){
   } else {
     const seq=isF?DB.settings.seqFacture:DB.settings.seqDevis;const year=DB.settings.year;
     const num=(isF?"FAC-":"DEV-")+year+"-"+String(seq).padStart(4,"0");
-    const doc={id:uid(),numero:num,clientId:fd.get("clientId"),date:fd.get("date"),lignes:e.doc.lignes,tva:e.doc.tva,...totals,notes:fd.get("notes"),createdAt:Date.now()};
+    const doc={id:uid(),numero:num,clientId:fd.get("clientId"),date:fd.get("date"),lignes:e.doc.lignes,tva:e.doc.tva,...totals,notes:fd.get("notes"),createdAt:new Date().toISOString()};
     if(isF){doc.echeance=fd.get("echeance");doc.paiements=[];doc.statut="impayée";DB.settings.seqFacture=seq+1}
     else{doc.validite=fd.get("validite");doc.statut="brouillon";DB.settings.seqDevis=seq+1}
     DB[e.kind].push(doc);sync(e.kind,doc);sync("settings",DB.settings);
@@ -693,7 +700,7 @@ function saveCmd(id){
   const f=$("#f-cmd");const fd=new FormData(f);
   const titre=fd.get("titre")||"";if(!titre.trim()){toast("Titre obligatoire");return}
   if(id){const c=DB.commandes.find(x=>x.id===id);Object.assign(c,{titre:titre.trim(),clientId:fd.get("clientId"),deadline:fd.get("deadline"),devisId:fd.get("devisId")||null,notes:fd.get("notes")});sync("commandes",c);}
-  else{const seq=DB.settings.seqCommande;const year=DB.settings.year;const num="CMD-"+year+"-"+String(seq).padStart(4,"0");const c={id:uid(),numero:num,titre:titre.trim(),clientId:fd.get("clientId"),statut:"devis",deadline:fd.get("deadline"),devisId:fd.get("devisId")||null,factureId:null,notes:fd.get("notes"),createdAt:Date.now()};DB.commandes.push(c);DB.settings.seqCommande=seq+1;sync("commandes",c);sync("settings",DB.settings);}
+  else{const seq=DB.settings.seqCommande;const year=DB.settings.year;const num="CMD-"+year+"-"+String(seq).padStart(4,"0");const c={id:uid(),numero:num,titre:titre.trim(),clientId:fd.get("clientId"),statut:"devis",deadline:fd.get("deadline"),devisId:fd.get("devisId")||null,factureId:null,notes:fd.get("notes"),createdAt:new Date().toISOString()};DB.commandes.push(c);DB.settings.seqCommande=seq+1;sync("commandes",c);sync("settings",DB.settings);}
   closeOverlays();toast(id?"Commande mise à jour":"Commande créée");refreshBadges();go(current);
 }
 function delCmd(id){if(!guard("commandes"))return;confirmModal("Supprimer cette commande ?","",()=>{DB.commandes=DB.commandes.filter(x=>x.id!==id);syncDel("commandes",id);closeOverlays();toast("Commande supprimée");refreshBadges();go("commandes")})}
@@ -752,7 +759,7 @@ function saveDepense(id){
   if(!guard("compta"))return;
   const f=$("#f-dep");const fd=new FormData(f);
   if(!fd.get("libelle").trim()){toast("Libellé obligatoire");return}
-  const dep={id:id||uid(),date:fd.get("date"),libelle:fd.get("libelle"),categorie:fd.get("categorie"),fournisseur:fd.get("fournisseur"),ht:+fd.get("ht")||0,tva:+fd.get("tva")||0,ttc:+fd.get("ttc")||0,createdAt:id?(DB.depenses.find(x=>x.id===id)||{}).createdAt||Date.now():Date.now()};
+  const dep={id:id||uid(),date:fd.get("date"),libelle:fd.get("libelle"),categorie:fd.get("categorie"),fournisseur:fd.get("fournisseur"),ht:+fd.get("ht")||0,tva:+fd.get("tva")||0,ttc:+fd.get("ttc")||0,createdAt:id?(DB.depenses.find(x=>x.id===id)||{}).createdAt||new Date().toISOString():new Date().toISOString()};
   if(id)DB.depenses=DB.depenses.map(x=>x.id===id?dep:x); else DB.depenses.push(dep);
   sync("depenses",dep);closeOverlays();toast(id?"Dépense mise à jour":"Dépense ajoutée");go(current);
 }
@@ -787,7 +794,7 @@ function saveProduct(id){
   if(!guard("catalogue"))return;
   const f=$("#f-prod");const fd=new FormData(f);
   if(!fd.get("designation").trim()){toast("Désignation obligatoire");return}
-  const p={id:id||uid(),designation:fd.get("designation"),categorie:fd.get("categorie"),pu:+fd.get("pu")||0,unite:fd.get("unite")||"unité",createdAt:id?(DB.products.find(x=>x.id===id)||{}).createdAt||Date.now():Date.now()};
+  const p={id:id||uid(),designation:fd.get("designation"),categorie:fd.get("categorie"),pu:+fd.get("pu")||0,unite:fd.get("unite")||"unité",createdAt:id?(DB.products.find(x=>x.id===id)||{}).createdAt||new Date().toISOString():new Date().toISOString()};
   if(id)DB.products=DB.products.map(x=>x.id===id?p:x); else DB.products.push(p);
   sync("products",p);closeOverlays();toast(id?"Produit mis à jour":"Produit ajouté");go(current);
 }
@@ -910,7 +917,7 @@ async function saveUser(id){
     sync("users",u);
   } else {
     if(!pw){toast("Mot de passe obligatoire");return}
-    const u={id:uid(),name,login,roleId:fd.get("roleId"),role_id:fd.get("roleId"),active,pass:await passHash(login,pw),createdAt:Date.now()};
+    const u={id:uid(),name,login,roleId:fd.get("roleId"),role_id:fd.get("roleId"),active,pass:await passHash(login,pw),createdAt:new Date().toISOString()};
     DB.users.push(u);sync("users",u);
   }
   closeOverlays();toast(id?"Compte mis à jour":"Compte créé");go("users");
