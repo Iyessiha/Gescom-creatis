@@ -302,7 +302,7 @@ async function doLogin() {
     }
 
     // Charger les utilisateurs depuis Supabase
-    const { data: users, error } = await SB.from("profiles").select("*");
+    const { data: users, error } = await SB.from("crm_users").select("*");
     if (error) { showErr("Erreur Supabase : " + (error.message || "connexion impossible")); return; }
     if (!users || !users.length) { showErr("Aucun compte trouvé. Exécutez le SQL de migration."); return; }
 
@@ -343,7 +343,7 @@ document.getElementById("login-form").addEventListener("keydown", e => {
   try {
     const sid = localStorage.getItem(SESSION_KEY);
     if (!sid || !SB) return;
-    const { data } = await SB.from("profiles").select("id,active").eq("id", sid).maybeSingle();
+    const { data } = await SB.from("crm_users").select("id,active").eq("id", sid).maybeSingle();
     if (data && data.active !== false) { window.location.href = "/app/"; }
   } catch(e) {}
 })();
