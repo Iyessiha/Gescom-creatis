@@ -56,14 +56,18 @@ function mapRows(rows){ return (rows||[]).map(fromDb); }
    COUCHE DB SUPABASE (CRUD)
    ============================================================ */
 async function dbFetch(table, order="created_at"){
-  const {data,error} = await SB.from(table).select("*").order(order, {ascending:false});
-  if(error){ console.error("dbFetch",table,error); return []; }
-  return mapRows(data||[]);
+  try {
+    const {data,error} = await SB.from(table).select("*").order(order, {ascending:false});
+    if(error){ console.error("dbFetch",table,error.message||error); return []; }
+    return mapRows(data||[]);
+  } catch(e){ console.error("dbFetch network",table,e); return []; }
 }
 async function dbFetchOne(table){
-  const {data,error} = await SB.from(table).select("*").limit(1).maybeSingle();
-  if(error){ console.error("dbFetchOne",table,error); return null; }
-  return fromDb(data);
+  try {
+    const {data,error} = await SB.from(table).select("*").limit(1).maybeSingle();
+    if(error){ console.error("dbFetchOne",table,error.message||error); return null; }
+    return fromDb(data);
+  } catch(e){ console.error("dbFetchOne network",table,e); return null; }
 }
 async function dbUpsert(table, obj){
   const row = toDb(obj);
@@ -192,6 +196,8 @@ const LOGO_SVG=`<svg width="34" height="34" viewBox="0 0 40 40" fill="none"><cir
 
 function renderAuth(){
   document.body.classList.add("auth-on");
+  // Si Supabase KO, DB.users peut être vide ou undefined → afficher onboard par sécurité
+  // car on ne sait pas si un admin existe déjà
   const onboard=!(DB.users&&DB.users.length);
   const co=DB.settings.company||{};
   $("#auth").innerHTML=`<div class="auth-bg"></div><div class="auth-card"><div class="auth-cmyk"><i></i><i></i><i></i><i></i></div>
@@ -240,8 +246,11 @@ async function doOnboard(){
 async function doLogin(){
   const login=($("#li-login")||{}).value?.trim().toLowerCase()||"";
   const pw=($("#li-pwd")||{}).value||"";
-  const u=DB.users.find(x=>(x.login||"").toLowerCase()===login&&x.active!==false);
   const errEl=$("#login-err");
+  if(!DB.users||!DB.users.length){
+    if(errEl)errEl.textContent="Connexion Supabase impossible. Vérifiez config.js et rechargez.";return;
+  }
+  const u=DB.users.find(x=>(x.login||"").toLowerCase()===login&&x.active!==false);
   if(!u){if(errEl)errEl.textContent="Identifiant ou mot de passe incorrect.";return}
   const h=await passHash(u.login,pw);
   if(u.pass!==h){if(errEl)errEl.textContent="Identifiant ou mot de passe incorrect.";return}
@@ -354,16 +363,17 @@ const ROUTES={
   parametres:{t:"Paramètres",render:viewParametres},
 };
 function go(route){
+  if(!USER)return; // Ne pas naviguer si non connecté
   if(!ROUTES[route]||!vis(route))route=firstAllowedRoute();
   current=route;
   document.body.classList.toggle("ro",!wr(route));
   document.querySelectorAll("#nav a").forEach(a=>a.classList.toggle("active",a.dataset.route===route));
-  $("#pg-title").textContent=ROUTES[route].t;
-  $("#pg-sub").textContent="";
-  $("#pg-actions").innerHTML="";
-  $("#sidebar").classList.remove("open");
+  const pg=$("#pg-title"); if(pg)pg.textContent=ROUTES[route].t;
+  const sub=$("#pg-sub"); if(sub)sub.textContent="";
+  const act=$("#pg-actions"); if(act)act.innerHTML="";
+  const sb=$("#sidebar"); if(sb)sb.classList.remove("open");
   window.scrollTo(0,0);
-  ROUTES[route].render();
+  try{ ROUTES[route].render(); }catch(e){ console.error("render error",route,e); }
 }
 function refreshBadges(){
   const bc=$("#b-clients"),bd=$("#b-devis"),bf=$("#b-factures"),bco=$("#b-commandes");
@@ -440,7 +450,7 @@ function viewClients(){
     ${list.map(c=>`<tr class="clk" onclick="openClient('${c.id}')">
       <td><div class="nm">${esc(c.nom)}</div><div class="meta">${esc(c.contact||"")}</div></td>
       <td><span class="seg">${esc(c.segment||"—")}</span></td>
-      <td>${pill(c.type==="client"?"accepté":"envoyé").replace("Accepté","Client").replace("Envoyé","Prospect")}</td>
+      <td>${c.type==="client"?'<span class="pill p-green"><span class="dot"></span>Client</span>':'<span class="pill p-cyan"><span class="dot"></span>Prospect</span>'}</td>
       <td class="meta">${esc(c.email||"—")}</td><td class="meta">${esc(c.tel||"—")}</td>
       <td class="r" onclick="event.stopPropagation()"><button class="btn btn-sm btn-ghost act-edit" onclick="editClient('${c.id}')">Modifier</button></td>
     </tr>`).join("")}
@@ -1041,24 +1051,29 @@ body.auth-on{overflow:hidden}
    BOOT ASYNC
    ============================================================ */
 (async function boot(){
-  try {
-    await loadAll();
-    // Vérifier session en cache
-    let sessionUser = null;
-    try {
-      const sid = localStorage.getItem(SESSION_KEY);
-      if(sid) sessionUser = DB.users.find(u => u.id === sid && u.active !== false) || null;
-    } catch(e){}
+  // Vérifier si les clés Supabase sont des placeholders
+  const keysOk = typeof SUPABASE_URL !== "undefined" &&
+                 !SUPABASE_URL.includes("VOTRE-ID") &&
+                 typeof SUPABASE_ANON_KEY !== "undefined" &&
+                 !SUPABASE_ANON_KEY.includes("VOTRE-CLE");
 
-    if(sessionUser){ enterApp(sessionUser); }
-    else { renderAuth(); }
-  } catch(err){
-    console.error("Boot error:", err);
-    // Afficher message d'erreur si Supabase injoignable
-    document.getElementById("view").innerHTML=`<div class="empty" style="margin-top:80px">
-      <svg class="em-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 9v4M12 17h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>
-      <h4>Impossible de se connecter à Supabase</h4>
-      <div>Vérifiez les clés dans <code>js/config.js</code> et la connexion internet.</div>
-    </div>`;
+  if(!keysOk){
+    // Clés non configurées → afficher auth directement sans planter
+    console.warn("Clés Supabase manquantes ou placeholder. Configurez js/config.js.");
+    renderAuth();
+    return;
   }
+
+  try { await loadAll(); } catch(err){ console.error("loadAll:", err); }
+
+  // Vérifier session en cache (même si loadAll a partiellement échoué)
+  let sessionUser = null;
+  try {
+    const sid = localStorage.getItem(SESSION_KEY);
+    if(sid && DB.users && DB.users.length)
+      sessionUser = DB.users.find(u => u.id === sid && u.active !== false) || null;
+  } catch(e){}
+
+  if(sessionUser){ enterApp(sessionUser); }
+  else { renderAuth(); }
 })();
