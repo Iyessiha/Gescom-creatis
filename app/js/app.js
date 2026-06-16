@@ -963,200 +963,284 @@ function printDoc(kind,id){
   const paid=isF?factPaid(d):0;
   const reste=Math.max(0,(d.montantTTC||0)-paid);
   const devise=DB.settings.devise||"F CFA";
-  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+devise;
-  const fmtDate=s=>s?new Date(s).toLocaleDateString("fr-FR",{day:"2-digit",month:"long",year:"numeric"}):"—";
-  const type_label=isF?"FACTURE":"DEVIS";
-  const date_label=isF?"Échéance":"Validité";
-  const date_val=isF?d.echeance:d.validite;
-  const stColors={payée:"#1AA06A",impayée:"#E0444E",partielle:"#E8A317",accepté:"#1AA06A",brouillon:"#8A8E97",envoyé:"#00AEEF",refusé:"#E0444E"};
-  const stLabels={payée:"Payée ✓",impayée:"Impayée",partielle:"Partiellement payée",accepté:"Accepté ✓",brouillon:"Brouillon",envoyé:"Envoyé",refusé:"Refusé"};
-  const st=isF?factStatut(d):d.statut;
-  const stColor=stColors[st]||"#8A8E97";
+  const type_label=isF?"Facture de vente":"Devis";
+  const fmtDate=s=>s?new Date(s).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric"})+" "+(s.length>10?new Date(s).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}):""):"—";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ");
 
-  const lignesHTML=(d.lignes||[]).map((l,i)=>{
+  // Lignes
+  const lignesHTML=(d.lignes||[]).map(l=>{
     const ht=Math.round((+l.qte||0)*(+l.pu||0)*(1-((+l.remise||0)/100)));
-    return`<tr style="background:${i%2===0?"#fff":"#F7F8FA"}">
-      <td style="padding:10px 14px;border-bottom:1px solid #ECEEF2;font-size:12px;color:#1A1A1C">${esc(l.designation||"")}</td>
-      <td style="padding:10px 14px;border-bottom:1px solid #ECEEF2;text-align:center;font-size:12px;color:#5B5E66">${l.qte}</td>
-      <td style="padding:10px 14px;border-bottom:1px solid #ECEEF2;text-align:right;font-size:12px;font-family:monospace;color:#1A1A1C">${fmt(l.pu)}</td>
-      <td style="padding:10px 14px;border-bottom:1px solid #ECEEF2;text-align:center;font-size:12px;color:${l.remise?"#E8A317":"#ccc"}">${l.remise?l.remise+"%":"—"}</td>
-      <td style="padding:10px 14px;border-bottom:1px solid #ECEEF2;text-align:right;font-size:12px;font-family:monospace;font-weight:700;color:#1A1A1C">${fmt(ht)}</td>
+    return`<tr>
+      <td style="border:1px solid #ccc;padding:6px 8px;font-size:11px">${esc(l.reference||"")}</td>
+      <td style="border:1px solid #ccc;padding:6px 8px;font-size:11px">${esc(l.designation||"")}</td>
+      <td style="border:1px solid #ccc;padding:6px 8px;font-size:11px;text-align:right">${fmt(l.pu)}</td>
+      <td style="border:1px solid #ccc;padding:6px 8px;font-size:11px;text-align:center">${l.qte}</td>
+      <td style="border:1px solid #ccc;padding:6px 8px;font-size:11px;text-align:center">${esc(l.unite||"U")}</td>
+      <td style="border:1px solid #ccc;padding:6px 8px;font-size:11px;text-align:center">TVAD (${tva})</td>
+      <td style="border:1px solid #ccc;padding:6px 8px;font-size:11px;text-align:center">${l.remise||0}</td>
+      <td style="border:1px solid #ccc;padding:6px 8px;font-size:11px;text-align:right;font-weight:600">${fmt(ht)}</td>
     </tr>`;
   }).join("");
 
+  // Paiements reçus
   const paiementsHTML=isF&&d.paiements&&d.paiements.length?`
-    <div style="margin-top:16px;padding:12px 14px;background:#EFF9F4;border:1px solid #B2DFC5;border-radius:8px">
-      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#137f4f;margin-bottom:8px">Paiements reçus</div>
-      ${d.paiements.map(p=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed #C8E6D4;font-size:11px;color:#333">
-        <span>${fmtDate(p.date)} — <em>${p.mode||""}</em></span>
-        <span style="font-family:monospace;font-weight:700;color:#137f4f">${fmt(p.montant)}</span>
-      </div>`).join("")}
+    <div style="margin-top:16px;border:1px solid #ccc;border-radius:4px;overflow:hidden">
+      <div style="background:#1A1A1C;color:#fff;padding:6px 10px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase">Historique des paiements</div>
+      <table style="width:100%;border-collapse:collapse">
+        ${d.paiements.map(p=>`<tr>
+          <td style="padding:5px 10px;border-bottom:1px solid #eee;font-size:11px">${fmtDate(p.date)}</td>
+          <td style="padding:5px 10px;border-bottom:1px solid #eee;font-size:11px">${esc(p.mode||"")}</td>
+          <td style="padding:5px 10px;border-bottom:1px solid #eee;font-size:11px;text-align:right;font-weight:700">${fmt(p.montant)}</td>
+        </tr>`).join("")}
+      </table>
     </div>`:"";
 
   const html=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
 <title>${esc(d.numero||"")} — ${esc(co.name||"Creatis Studio")}</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700;800&display=swap');
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Inter',Arial,sans-serif;color:#1A1A1C;background:#E0E2E7;padding:24px}
-.page{width:794px;min-height:1100px;background:#fff;margin:0 auto;border-radius:4px;overflow:hidden;box-shadow:0 6px 40px rgba(0,0,0,.18)}
-@media print{body{background:#fff;padding:0}.page{box-shadow:none;border-radius:0;width:100%}.no-print{display:none!important}@page{margin:0;size:A4}}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:Arial,Helvetica,sans-serif;color:#1A1A1C;font-size:12px;background:#e8e8e8;padding:20px}
+  .page{width:794px;background:#fff;margin:0 auto;padding:0;box-shadow:0 2px 20px rgba(0,0,0,.15)}
+  table{border-collapse:collapse}
+  @media print{body{background:#fff;padding:0}.page{box-shadow:none;width:100%}.no-print{display:none}@page{margin:8mm;size:A4}}
 </style></head><body>
 <div class="page">
-  <div style="height:6px;display:flex">
+
+  <!-- BANDE CMJN SUPÉRIEURE -->
+  <div style="height:5px;display:flex">
     <div style="flex:1;background:#00AEEF"></div><div style="flex:1;background:#EC008C"></div>
     <div style="flex:1;background:#FFC400"></div><div style="flex:1;background:#1A1A1C"></div>
   </div>
-  <div style="padding:30px 36px 0">
-    <!-- EN-TÊTE -->
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:20px;border-bottom:2px solid #1A1A1C;margin-bottom:22px">
-      <div>
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-          <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+
+  <div style="padding:20px 24px">
+
+    <!-- BLOC VENDEUR (gauche) + FNE (droite) -->
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px">
+
+      <!-- VENDEUR -->
+      <div style="border:1.5px solid #1A1A1C;border-radius:4px;padding:10px 14px;min-width:240px;font-size:11px;line-height:1.9">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <svg width="30" height="30" viewBox="0 0 40 40" fill="none">
             <circle cx="20" cy="20" r="16" stroke="#FFC400" stroke-width="3.4" stroke-dasharray="58 90" transform="rotate(-30 20 20)"/>
             <circle cx="20" cy="20" r="12.5" stroke="#EC008C" stroke-width="3.4" stroke-dasharray="44 90" transform="rotate(110 20 20)"/>
             <circle cx="20" cy="20" r="12.5" stroke="#00AEEF" stroke-width="3.4" stroke-dasharray="40 120" transform="rotate(-110 20 20)"/>
-            <text x="20" y="26" font-family="Space Grotesk" font-size="17" font-weight="700" fill="#1A1A1C" text-anchor="middle">C</text>
+            <text x="20" y="26" font-family="Arial" font-size="15" font-weight="700" fill="#1A1A1C" text-anchor="middle">C</text>
           </svg>
           <div>
-            <div style="font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:800;color:#1A1A1C;letter-spacing:.03em">${esc(co.name||"CREATIS STUDIO")}</div>
-            <div style="font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:#8A8E97;margin-top:1px">${esc(co.activite||"Création · Impression · Fournitures de bureau · Gadgets")}</div>
+            <div style="font-size:14px;font-weight:700;letter-spacing:.02em">${esc(co.name||"CREATIS STUDIO")}</div>
+            <div style="font-size:9px;letter-spacing:.12em;color:#555;text-transform:uppercase">${esc(co.activite||"Création · Impression · Fournitures · Gadgets")}</div>
           </div>
         </div>
-        <div style="font-size:10px;color:#5B5E66;line-height:1.9;margin-left:50px">
-          <div>${esc(co.siege||"")}</div>
-          <div>Tél : ${esc(co.tel||"")}  ·  Cel : ${esc(co.cel||"")}</div>
-          <div>${esc(co.email||"")}  ·  ${esc(co.site||"")}</div>
-          <div style="margin-top:5px;padding:2px 8px;background:#F1F2F4;border-radius:4px;display:inline-block;font-size:9px;font-weight:600;letter-spacing:.03em">
-            RC ${esc(co.rc||"")}  ·  CC ${esc(co.cc||"")}  ·  Régime : ${esc(co.regime||"")}  ·  Centre : ${esc(co.centre||"")}
-          </div>
-        </div>
+        <div><strong>NCC :</strong> ${esc(co.cc||"0811105V")}</div>
+        <div><strong>Régime d'imposition :</strong> ${esc(co.regime||"Réel Simplifié")}</div>
+        <div><strong>Centre des impôts :</strong> ${esc(co.centre||"II Plateaux 2")}</div>
+        <div><strong>RCCM :</strong> ${esc(co.rc||"CI-ABJ-2007-B-3172")}</div>
+        <div><strong>Références bancaires :</strong> ${esc(co.banque||"")}</div>
+        <div><strong>Établissement :</strong> ${esc(co.name||"CREATIS STUDIO")}</div>
+        <div><strong>Adresse :</strong> ${esc(co.siege||"Cocody Val Doyen 4 — Duplex Appt 135")}</div>
+        <div><strong>N° Tel :</strong> ${esc(co.tel||"")} / ${esc(co.cel||"")}</div>
+        <div><strong>Mail :</strong> ${esc(co.email||"infos@creatis-ci.com")}</div>
+        <div style="margin-top:6px"><strong>Date et heure :</strong> ${fmtDate(d.date)}</div>
+        <div><strong>Mode de paiement :</strong> Virement bancaire</div>
       </div>
+
+      <!-- FNE -->
       <div style="text-align:right">
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:30px;font-weight:800;color:#1A1A1C;letter-spacing:.06em">${type_label}</div>
-        <div style="font-size:15px;font-weight:700;color:#EC008C;margin-top:2px;letter-spacing:.04em">${esc(d.numero||"")}</div>
-        <div style="margin-top:10px;font-size:10.5px;color:#5B5E66;line-height:2">
-          <div><strong style="color:#1A1A1C">Émise le :</strong> ${fmtDate(d.date)}</div>
-          <div><strong style="color:#1A1A1C">${date_label} :</strong> ${fmtDate(date_val)}</div>
+        <!-- QR Code placeholder -->
+        <div style="display:flex;justify-content:flex-end;align-items:flex-start;gap:12px;margin-bottom:10px">
+          <!-- QR code simulé -->
+          <div style="width:80px;height:80px;border:2px solid #1A1A1C;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden">
+            <svg width="70" height="70" viewBox="0 0 70 70" fill="none">
+              <!-- Coins QR -->
+              <rect x="4" y="4" width="20" height="20" rx="2" stroke="#1A1A1C" stroke-width="3" fill="none"/>
+              <rect x="8" y="8" width="12" height="12" fill="#1A1A1C"/>
+              <rect x="46" y="4" width="20" height="20" rx="2" stroke="#1A1A1C" stroke-width="3" fill="none"/>
+              <rect x="50" y="8" width="12" height="12" fill="#1A1A1C"/>
+              <rect x="4" y="46" width="20" height="20" rx="2" stroke="#1A1A1C" stroke-width="3" fill="none"/>
+              <rect x="8" y="50" width="12" height="12" fill="#1A1A1C"/>
+              <!-- Modules centraux -->
+              <rect x="28" y="4" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="34" y="4" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="28" y="10" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="34" y="16" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="4" y="28" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="10" y="34" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="28" y="28" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="34" y="28" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="40" y="28" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="28" y="34" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="40" y="34" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="28" y="40" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="34" y="40" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="46" y="28" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="52" y="28" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="58" y="28" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="46" y="34" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="52" y="40" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="28" y="46" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="34" y="52" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="46" y="46" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="52" y="52" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="58" y="46" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="58" y="58" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="40" y="52" width="4" height="4" fill="#1A1A1C"/>
+              <rect x="46" y="58" width="4" height="4" fill="#1A1A1C"/>
+            </svg>
+          </div>
+          <!-- Logo FNE -->
+          <div style="border:2px solid #1A1A1C;border-radius:4px;padding:4px 8px;width:90px;text-align:center">
+            <div style="display:flex;justify-content:center;align-items:center;gap:2px;margin-bottom:4px">
+              <div style="width:18px;height:18px;background:#00843D;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:11px">f</div>
+              <div style="font-size:16px;font-weight:900;color:#003189">NE</div>
+            </div>
+            <div style="font-size:7px;font-weight:700;color:#1A1A1C;letter-spacing:.04em;text-transform:uppercase;border-top:1px solid #ccc;padding-top:3px;line-height:1.4">FACTURE<br>NORMALISÉE<br>ÉLECTRONIQUE</div>
+          </div>
         </div>
-        <div style="margin-top:8px;display:inline-block;padding:4px 14px;border-radius:20px;font-size:10.5px;font-weight:700;
-          background:${stColor}18;color:${stColor};border:1.5px solid ${stColor}50">
-          ${stLabels[st]||st}
+
+        <!-- Numéro de facture -->
+        <div style="font-size:14px;font-weight:700;color:#1A1A1C;margin-bottom:14px;text-align:right">
+          ${type_label} N° ${esc(d.numero||"")}
+        </div>
+
+        <!-- CLIENT -->
+        <div style="border:1px solid #ccc;border-radius:4px;padding:10px 14px;text-align:left;min-width:220px;font-size:11px;line-height:1.9">
+          <div style="font-weight:700;font-size:12px;margin-bottom:6px;border-bottom:1px solid #eee;padding-bottom:4px">Client</div>
+          <div><strong>Nom :</strong> ${esc(cli.nom||clientName(d.clientId))}</div>
+          ${cli.adresse?`<div><strong>Adresse :</strong> ${esc(cli.adresse)}</div>`:""}
+          ${cli.email?`<div><strong>Mail :</strong> ${esc(cli.email)}</div>`:""}
+          ${cli.tel?`<div><strong>N° Tel :</strong> ${esc(cli.tel)}</div>`:""}
+          <div><strong>NCC :</strong> ${esc(cli.ncc||"—")}</div>
+          <div><strong>Régime d'imposition :</strong> ${esc(cli.regime||"—")}</div>
         </div>
       </div>
     </div>
 
-    <!-- BLOC CLIENT + INFO PAIEMENT -->
-    <div style="display:flex;gap:14px;margin-bottom:22px">
-      <div style="flex:1.5;background:#F8F8FA;border-radius:10px;padding:14px 18px;border-left:4px solid #EC008C">
-        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#8A8E97;margin-bottom:6px">Facturé à</div>
-        <div style="font-size:15px;font-weight:700;color:#1A1A1C;margin-bottom:4px">${esc(cli.nom||clientName(d.clientId))}</div>
-        <div style="font-size:10.5px;color:#5B5E66;line-height:1.9">
-          ${cli.contact?`<div>${esc(cli.contact)}</div>`:""}
-          ${cli.tel?`<div>Tél : ${esc(cli.tel)}</div>`:""}
-          ${cli.email?`<div>${esc(cli.email)}</div>`:""}
-          ${cli.adresse?`<div>${esc(cli.adresse)}</div>`:""}
-        </div>
-      </div>
-      <div style="flex:1;background:#F8F8FA;border-radius:10px;padding:14px 18px">
-        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#8A8E97;margin-bottom:8px">${isF?"Règlement":"Conditions"}</div>
-        <div style="font-size:10.5px;color:#5B5E66;line-height:2">
-          ${isF?`<div><strong style="color:#1A1A1C">Banque :</strong> SGCI</div>
-          <div><strong style="color:#1A1A1C">N° Compte :</strong> ${esc(co.banque||"")}</div>
-          <div><strong style="color:#1A1A1C">Mode :</strong> Virement bancaire</div>
-          ${reste>0?`<div style="margin-top:6px;font-size:11px;font-weight:700;color:#E0444E;padding:4px 8px;background:#FDE8E8;border-radius:4px">Reste : ${fmt(reste)}</div>`:
-          `<div style="margin-top:6px;font-size:11px;font-weight:700;color:#137f4f;padding:4px 8px;background:#EFF9F4;border-radius:4px">✓ Facture soldée</div>`}`
-          :`<div><strong style="color:#1A1A1C">Valide jusqu'au :</strong> ${fmtDate(date_val)}</div>
-          <div><strong style="color:#1A1A1C">TVA :</strong> ${tva}%</div>
-          <div><strong style="color:#1A1A1C">Devise :</strong> Franc CFA (XOF)</div>`}
-        </div>
-      </div>
-    </div>
+    <!-- TABLE DES PRESTATIONS -->
+    <table style="width:100%;border-collapse:collapse;margin-bottom:0">
+      <thead>
+        <tr style="background:#1A1A1C;color:#fff">
+          <th style="border:1px solid #555;padding:7px 8px;font-size:11px;text-align:left;width:50px">Réf</th>
+          <th style="border:1px solid #555;padding:7px 8px;font-size:11px;text-align:left">Désignation</th>
+          <th style="border:1px solid #555;padding:7px 8px;font-size:11px;text-align:right;width:80px">P.U HT</th>
+          <th style="border:1px solid #555;padding:7px 8px;font-size:11px;text-align:center;width:50px">Qté</th>
+          <th style="border:1px solid #555;padding:7px 8px;font-size:11px;text-align:center;width:50px">Unité</th>
+          <th style="border:1px solid #555;padding:7px 8px;font-size:11px;text-align:center;width:80px">Taxes (%)</th>
+          <th style="border:1px solid #555;padding:7px 8px;font-size:11px;text-align:center;width:60px">Rem. (%)</th>
+          <th style="border:1px solid #555;padding:7px 8px;font-size:11px;text-align:right;width:100px">Montant HT</th>
+        </tr>
+      </thead>
+      <tbody>${lignesHTML}</tbody>
+    </table>
 
-    <!-- TABLEAU -->
-    <div style="border-radius:10px;overflow:hidden;border:1px solid #E4E6EA;margin-bottom:16px">
+    <!-- TOTAUX (alignés à droite comme le modèle) -->
+    <table style="width:100%;border-collapse:collapse;border-top:none">
+      <tr>
+        <td style="border:1px solid #ccc;border-top:none;padding:6px 8px" colspan="6">&nbsp;</td>
+        <td style="border:1px solid #ccc;border-top:none;padding:6px 10px;font-size:11px;font-weight:700;text-align:right;background:#f5f5f5">TOTAL HT</td>
+        <td style="border:1px solid #ccc;border-top:none;padding:6px 10px;font-size:11px;font-weight:700;text-align:right;width:100px">${fmt(d.montantHT)}</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ccc;padding:6px 8px" colspan="6">&nbsp;</td>
+        <td style="border:1px solid #ccc;padding:6px 10px;font-size:11px;font-weight:700;text-align:right;background:#f5f5f5">TVA</td>
+        <td style="border:1px solid #ccc;padding:6px 10px;font-size:11px;text-align:right">${fmt(d.montantTVA)}</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ccc;padding:6px 8px" colspan="6">&nbsp;</td>
+        <td style="border:1px solid #ccc;padding:6px 10px;font-size:11px;font-weight:700;text-align:right;background:#f5f5f5">TOTAL TTC</td>
+        <td style="border:1px solid #ccc;padding:6px 10px;font-size:11px;font-weight:700;text-align:right">${fmt(d.montantTTC)}</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ccc;padding:6px 8px" colspan="6">&nbsp;</td>
+        <td style="border:1px solid #ccc;padding:6px 10px;font-size:11px;font-weight:700;text-align:right;background:#f5f5f5">AUTRES TAXES</td>
+        <td style="border:1px solid #ccc;padding:6px 10px;font-size:11px;text-align:right">0</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #ccc;padding:8px 8px;background:#1A1A1C" colspan="6">&nbsp;</td>
+        <td style="border:1px solid #1A1A1C;padding:8px 10px;font-size:12px;font-weight:700;text-align:right;background:#1A1A1C;color:#FFC400">TOTAL À PAYER</td>
+        <td style="border:1px solid #1A1A1C;padding:8px 10px;font-size:12px;font-weight:700;text-align:right;background:#FFC400;color:#1A1A1C">${fmt(isF?reste:d.montantTTC)}</td>
+      </tr>
+    </table>
+
+    ${isF&&paid>0?`
+    <!-- PAIEMENTS REÇUS -->
+    <div style="display:flex;justify-content:flex-end;margin-top:6px">
+      <div style="border:1px solid #B2DFC5;border-radius:4px;overflow:hidden;min-width:300px">
+        <div style="background:#00843D;color:#fff;padding:5px 10px;font-size:10px;font-weight:700;text-align:center">PAIEMENTS REÇUS</div>
+        ${d.paiements.map(p=>`<div style="display:flex;justify-content:space-between;padding:5px 10px;border-bottom:1px solid #eee;font-size:11px">
+          <span>${fmtDate(p.date)} — ${esc(p.mode||"")}</span>
+          <strong>${fmt(p.montant)}</strong>
+        </div>`).join("")}
+        <div style="display:flex;justify-content:space-between;padding:6px 10px;background:#E3F6EC;font-size:11px;font-weight:700">
+          <span>Total payé</span><span style="color:#00843D">${fmt(paid)}</span>
+        </div>
+      </div>
+    </div>`:""}
+
+    <!-- RÉSUMÉ DE LA FACTURE -->
+    <div style="margin-top:20px">
+      <div style="font-size:11px;font-weight:700;margin-bottom:6px;padding:4px 0;border-bottom:1.5px solid #1A1A1C">RÉSUMÉ DE LA FACTURE</div>
       <table style="width:100%;border-collapse:collapse">
         <thead>
-          <tr style="background:#1A1A1C">
-            <th style="padding:11px 14px;text-align:left;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#fff;font-weight:600">Désignation</th>
-            <th style="padding:11px 10px;text-align:center;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#fff;font-weight:600;width:56px">Qté</th>
-            <th style="padding:11px 14px;text-align:right;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#fff;font-weight:600;width:120px">PU HT</th>
-            <th style="padding:11px 10px;text-align:center;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#fff;font-weight:600;width:70px">Remise</th>
-            <th style="padding:11px 14px;text-align:right;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:#fff;font-weight:600;width:130px">Total HT</th>
+          <tr style="background:#f5f5f5">
+            <th style="border:1px solid #ccc;padding:6px 10px;font-size:11px;text-align:left">CATÉGORIE</th>
+            <th style="border:1px solid #ccc;padding:6px 10px;font-size:11px;text-align:right">SOUS-TOTAL</th>
+            <th style="border:1px solid #ccc;padding:6px 10px;font-size:11px;text-align:center">TAUX (%)</th>
+            <th style="border:1px solid #ccc;padding:6px 10px;font-size:11px;text-align:right">TOTAL TAXES</th>
           </tr>
         </thead>
-        <tbody>${lignesHTML}</tbody>
+        <tbody>
+          <tr>
+            <td style="border:1px solid #ccc;padding:6px 10px;font-size:11px">TVA ${tva}% — Régime Réel Simplifié (RSI)</td>
+            <td style="border:1px solid #ccc;padding:6px 10px;font-size:11px;text-align:right">${fmt(d.montantHT)}</td>
+            <td style="border:1px solid #ccc;padding:6px 10px;font-size:11px;text-align:center">${tva}%</td>
+            <td style="border:1px solid #ccc;padding:6px 10px;font-size:11px;text-align:right">${fmt(d.montantTVA)}</td>
+          </tr>
+        </tbody>
       </table>
     </div>
 
-    <!-- TOTAUX -->
-    <div style="display:flex;justify-content:flex-end;margin-bottom:16px">
-      <div style="min-width:290px">
-        <div style="display:flex;justify-content:space-between;padding:8px 14px;font-size:12px;background:#F7F8FA;border-radius:6px 6px 0 0;border:1px solid #E4E6EA;border-bottom:none">
-          <span style="color:#5B5E66">Montant HT</span>
-          <span style="font-family:monospace;font-weight:600">${fmt(d.montantHT)}</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;padding:8px 14px;font-size:12px;background:#E8F4FD;border:1px solid #BDD9EE;border-bottom:none">
-          <span style="color:#0a6fa0">TVA ${tva}%</span>
-          <span style="font-family:monospace;font-weight:600;color:#0a6fa0">${fmt(d.montantTVA)}</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;padding:13px 16px;background:#1A1A1C;border-radius:0 0 8px 8px">
-          <span style="font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:#fff">TOTAL TTC</span>
-          <span style="font-family:monospace;font-size:17px;font-weight:700;color:#FFC400">${fmt(d.montantTTC)}</span>
-        </div>
-        ${isF&&paid>0?`
-        <div style="display:flex;justify-content:space-between;padding:8px 14px;font-size:12px;margin-top:6px;background:#EFF9F4;border-radius:6px;border:1px solid #B2DFC5">
-          <span style="color:#137f4f;font-weight:600">Déjà réglé</span>
-          <span style="font-family:monospace;font-weight:700;color:#137f4f">− ${fmt(paid)}</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;padding:8px 14px;font-size:13px;margin-top:3px;background:${reste>0?"#FDE8E8":"#EFF9F4"};border-radius:6px;border:1px solid ${reste>0?"#F3C9CD":"#B2DFC5"}">
-          <span style="font-weight:700;color:${reste>0?"#E0444E":"#137f4f"}">Reste à payer</span>
-          <span style="font-family:monospace;font-weight:700;color:${reste>0?"#E0444E":"#137f4f"}">${fmt(reste)}</span>
-        </div>`:""}
-      </div>
+    ${d.notes?`<div style="margin-top:12px;padding:8px 12px;border:1px solid #E4E6EA;border-radius:4px;font-size:10.5px;color:#555"><strong>Notes : </strong>${esc(d.notes)}</div>`:""}
+
+    <!-- ARRÊTÉ EN LETTRES -->
+    <div style="margin-top:14px;padding:8px 12px;background:#F5F5F7;border-radius:4px;font-size:10.5px;color:#555;font-style:italic;border-left:3px solid #EC008C">
+      Arrêtée la présente ${isF?"facture":"offre"} à la somme de : <strong style="color:#1A1A1C;font-style:normal">${fmt(d.montantTTC)} ${devise}</strong>
     </div>
 
-    ${paiementsHTML}
-
-    <!-- ARRÊTÉ -->
-    <div style="margin-top:16px;padding:10px 14px;background:#F1F2F4;border-radius:6px;font-size:10.5px;color:#5B5E66;font-style:italic">
-      Arrêtée la présente ${type_label.toLowerCase()} à la somme de : <strong style="color:#1A1A1C;font-style:normal">${fmt(d.montantTTC)}</strong>
-    </div>
-
-    ${d.notes?`<div style="margin-top:12px;padding:10px 14px;border:1px solid #E4E6EA;border-radius:6px;font-size:10.5px;color:#5B5E66"><strong style="color:#1A1A1C">Notes : </strong>${esc(d.notes)}</div>`:""}
-
-    ${isF?`<div style="display:flex;justify-content:flex-end;margin-top:32px">
-      <div style="width:180px;text-align:center;font-size:10px;color:#8A8E97">
-        <div style="border-top:1px solid #ccc;margin-top:52px;padding-top:6px">Signature & Cachet</div>
+    <!-- SIGNATURE -->
+    <div style="display:flex;justify-content:flex-end;margin-top:32px;margin-bottom:10px">
+      <div style="text-align:center;width:200px;font-size:10px;color:#777">
+        <div style="border-top:1px solid #ccc;margin-top:48px;padding-top:5px">Signature & Cachet du vendeur</div>
+        <div style="margin-top:3px;font-weight:600;color:#1A1A1C">${esc(co.name||"CREATIS STUDIO")}</div>
       </div>
-    </div>`:""}
+    </div>
   </div>
 
-  <!-- PIED DE PAGE -->
-  <div style="margin:20px 36px 0;padding:12px 0;border-top:1px solid #E4E6EA">
-    <div style="display:flex;justify-content:space-between;align-items:flex-end">
-      <div style="font-size:8.5px;color:#8A8E97;line-height:1.9">
-        <strong style="color:#5B5E66">${esc(co.name||"CREATIS STUDIO")}</strong> — SARL au capital de ${esc(co.capital||"1 000 000 F CFA")}<br>
-        Siège : ${esc(co.siege||"")} — RC ${esc(co.rc||"")} — CC ${esc(co.cc||"")}<br>
-        Banque : ${esc(co.banque||"")}
-      </div>
-      <div style="font-size:8px;color:#ccc">${esc(d.numero||"")} · Émise le ${new Date().toLocaleDateString("fr-FR")}</div>
+  <!-- PIED DE PAGE LÉGAL -->
+  <div style="background:#F1F2F4;padding:10px 24px;border-top:1px solid #ddd">
+    <div style="font-size:8.5px;color:#777;text-align:center;line-height:1.8">
+      ${esc(co.name||"CREATIS STUDIO")} — SARL au capital de ${esc(co.capital||"1 000 000 F CFA")} — Siège : ${esc(co.siege||"")}
+      — RC ${esc(co.rc||"")} — CC ${esc(co.cc||"")} — Régime : ${esc(co.regime||"")} — Centre : ${esc(co.centre||"")}
+      — Banque : ${esc(co.banque||"")}
+    </div>
+    <div style="font-size:7.5px;color:#aaa;text-align:center;margin-top:2px">
+      Facture générée le ${new Date().toLocaleDateString("fr-FR")} — ${esc(d.numero||"")} — Conforme DGI / FNE Côte d'Ivoire
     </div>
   </div>
-  <div style="height:4px;display:flex;margin-top:12px">
+
+  <!-- BANDE CMJN INFÉRIEURE -->
+  <div style="height:4px;display:flex">
     <div style="flex:1;background:#00AEEF"></div><div style="flex:1;background:#EC008C"></div>
     <div style="flex:1;background:#FFC400"></div><div style="flex:1;background:#1A1A1C"></div>
   </div>
 </div>
 
-<div class="no-print" style="text-align:center;padding:24px">
-  <button onclick="window.print()" style="padding:13px 36px;background:#1A1A1C;color:#fff;border:none;border-radius:30px;font-size:14px;font-weight:700;cursor:pointer;margin-right:10px">🖨️ Imprimer / PDF</button>
-  <button onclick="window.close()" style="padding:13px 24px;background:#fff;color:#1A1A1C;border:1.5px solid #E4E6EA;border-radius:30px;font-size:14px;cursor:pointer">Fermer</button>
+<div class="no-print" style="text-align:center;padding:20px;display:flex;justify-content:center;gap:12px">
+  <button onclick="window.print()" style="padding:12px 32px;background:#1A1A1C;color:#fff;border:none;border-radius:30px;font-size:14px;font-weight:700;cursor:pointer">🖨️ Imprimer / Exporter PDF</button>
+  <button onclick="window.close()" style="padding:12px 24px;background:#fff;color:#1A1A1C;border:1.5px solid #ccc;border-radius:30px;font-size:14px;cursor:pointer">✕ Fermer</button>
 </div>
-<script>if(window.location.hash==="#print")window.print();</script>
 </body></html>`;
 
-  const w=window.open("","_blank","width=860,height=720");
+  const w=window.open("","_blank","width=900,height=740");
   w.document.write(html);
   w.document.close();
 }

@@ -1,6 +1,6 @@
 /* Service Worker — Creatis CRM (Supabase version)
    Cache uniquement l'app shell ; jamais les requêtes Supabase */
-const CACHE = 'creatis-crm-app-v9';
+const CACHE = 'creatis-crm-app-v10';
 const ASSETS = [
   '/app/', '/app/index.html', '/app/manifest.webmanifest',
   '/app/css/style.css?v=3', '/app/js/config.js?v=3', '/app/js/app.js?v=3',
