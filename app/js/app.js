@@ -12,7 +12,7 @@ const SB = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 /* ============================================================
    ÉTAT LOCAL (cache en mémoire — hydraté depuis Supabase)
    ============================================================ */
-let DB = { settings:{}, roles:[], users:[], clients:[], products:[], devis:[], factures:[], commandes:[], depenses:[] };
+let DB = { settings:{}, roles:[], users:[], clients:[], products:[], fournisseurs:[], devis:[], factures:[], commandes:[], depenses:[] };
 let USER = null;
 let usersTab = "comptes";
 let clientSearch = "";
@@ -102,7 +102,7 @@ function sync(table, obj){
   dbUpsert(supaTable, obj).catch(e=>console.error(e));
 }
 function syncDel(table, id){
-  const supaTable = {users:"crm_users", roles:"crm_roles"}[table]||table;
+  const supaTable = {users:"crm_users", roles:"crm_roles", "journal":"journal_entries"}[table]||table;
   dbDelete(supaTable, id).catch(e=>console.error(e));
 }
 
@@ -111,12 +111,13 @@ function syncDel(table, id){
    ============================================================ */
 async function loadAll(){
   const [settingsRow, rolesRows, usersRows, clientsRows, productsRows,
-         devisRows, facturesRows, commandesRows, depensesRows] = await Promise.all([
+         fournisseursRows, devisRows, facturesRows, commandesRows, depensesRows] = await Promise.all([
     dbFetchOne("app_settings"),
     dbFetch("crm_roles","created_at"),
     dbFetch("crm_users","created_at"),
     dbFetch("clients","created_at"),
     dbFetch("products","designation"),
+    dbFetch("fournisseurs","created_at"),
     dbFetch("devis","created_at"),
     dbFetch("factures","created_at"),
     dbFetch("commandes","created_at"),
@@ -150,9 +151,10 @@ async function loadAll(){
     });
   }
 
-  DB.users     = usersRows;
-  DB.clients   = clientsRows;
-  DB.products  = productsRows;
+  DB.users        = usersRows;
+  DB.clients      = clientsRows;
+  DB.products     = productsRows;
+  DB.fournisseurs = fournisseursRows;
   DB.devis     = devisRows;
   DB.factures  = facturesRows;
   DB.commandes = commandesRows;
@@ -169,8 +171,8 @@ function defaultSettings(){
   return {company:defaultCompany(),tva:18,devise:"F CFA",year:new Date().getFullYear(),seqDevis:1,seqFacture:1,seqCommande:1};
 }
 function defaultRoles(){
-  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","parametres","dokira"].forEach(m=>full[m]="edit");
-  const mk=(map)=>{const o={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","parametres","dokira"].forEach(m=>o[m]=map[m]||"none");return o};
+  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","parametres","dokira"].forEach(m=>full[m]="edit");
+  const mk=(map)=>{const o={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","parametres","dokira"].forEach(m=>o[m]=map[m]||"none");return o};
   return [
     {id:"administrateur",name:"Administrateur",system:true,color:"noir",perms:full,widgets:["kpi_encaisse","kpi_reste","kpi_devis","kpi_leads","chart_ca","pipe_devis","list_relance","list_echeances"]},
     {id:"commercial",name:"Commercial",color:"cyan",perms:mk({dashboard:"view",clients:"edit",devis:"edit",factures:"edit",commandes:"edit",catalogue:"edit"}),widgets:["kpi_devis","kpi_leads","kpi_encaisse","kpi_prod","pipe_devis","list_relance"]},
@@ -245,7 +247,8 @@ const MODS=[
   {k:"commandes",label:"Commandes & projets"},{k:"compta",label:"Comptabilité & TVA"},
   {k:"catalogue",label:"Catalogue"},{k:"users",label:"Utilisateurs & rôles"},
   {k:"parametres",label:"Paramètres"},
-  {k:"dokira",label:"Sync Dokira"}
+  {k:"fournisseurs",label:"Fournisseurs"},
+  {k:"dokira",label:"Sync Dolibarr"}
 ];
 const WIDGETS=[
   {k:"kpi_encaisse",label:"Encaissé (mois/année)"},{k:"kpi_reste",label:"Reste à encaisser"},
@@ -669,7 +672,8 @@ const ROUTES={
   catalogue:{t:"Catalogue produits",render:viewCatalogue},
   users:{t:"Utilisateurs & rôles",render:viewUsers},
   parametres:{t:"Paramètres",render:viewParametres},
-  dokira:{t:"Sync Dokira",render:viewDokira},
+  fournisseurs:{t:"Fournisseurs",render:viewFournisseurs},
+  dokira:{t:"Sync Dolibarr",render:viewDokira},
 };
 function go(route){
   if(!USER)return;
@@ -1327,12 +1331,23 @@ function _sheetCompta(){
 }
 
 // ── Export GLOBAL (toutes feuilles) ──
+function _sheetFournisseurs(){
+  return _ws(DB.fournisseurs.map(f=>({
+    "Nom":f.nom||"","Contact":f.contact||"","Secteur":f.secteur||"",
+    "Téléphone":f.tel||"","Email":f.email||"","Adresse":f.adresse||"",
+    "Conditions":f.conditionsPaiement||f.conditions_paiement||"",
+    "N° Contribuable":f.numeroContribuable||f.numero_contribuable||"",
+    "Banque":f.compteBancaire||f.compte_bancaire||"",
+    "Statut":f.actif!==false?"Actif":"Inactif"
+  })),{"Nom":28,"Contact":20,"Secteur":16,"Téléphone":14,"Email":26,"Adresse":34,"Conditions":16,"N° Contribuable":20,"Banque":30,"Statut":8});
+}
 function exportExcel(scope){
   scope = scope || "all";
   const wb = XLSX.utils.book_new();
   const co = DB.settings?.company||{};
   const now = new Date().toLocaleDateString("fr-FR");
 
+  if(scope==="all"||scope==="fournisseurs") XLSX.utils.book_append_sheet(wb, _sheetFournisseurs(), "Fournisseurs");
   if(scope==="all"||scope==="clients")   XLSX.utils.book_append_sheet(wb, _sheetClients(),   "Clients");
   if(scope==="all"||scope==="devis")     XLSX.utils.book_append_sheet(wb, _sheetDevis(),     "Devis");
   if(scope==="all"||scope==="factures")  XLSX.utils.book_append_sheet(wb, _sheetFactures(),  "Factures");
@@ -1561,3 +1576,426 @@ document.querySelectorAll("#nav a").forEach(a=>a.addEventListener("click",()=>go
   if(sessionUser){ enterApp(sessionUser); }
   else { renderAuth(); }
 })();
+/* ============================================================
+   FOURNISSEURS
+   ============================================================ */
+function fournisseurName(id){ const f=DB.fournisseurs.find(x=>x.id===id); return f?f.nom:"—"; }
+
+function viewFournisseurs(){
+  if(!vis("fournisseurs"))return;
+  $("#pg-actions").innerHTML=`
+    <button class="btn" onclick="exportExcel('fournisseurs')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button>
+    <button class="btn btn-primary act-edit" onclick="editFournisseur()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouveau fournisseur</button>`;
+
+  if(!DB.fournisseurs.length){
+    $("#view").innerHTML=emptyState("Aucun fournisseur","Ajoutez vos fournisseurs habituels.","Nouveau fournisseur","editFournisseur()");return;
+  }
+  const actifs=DB.fournisseurs.filter(f=>f.actif!==false);
+  const inactifs=DB.fournisseurs.filter(f=>f.actif===false);
+  $("#view").innerHTML=`
+  <div class="grid kpis" style="margin-bottom:16px">
+    <div class="card kpi c-cyan"><span class="tick"></span><div class="lab">Fournisseurs actifs</div><div class="val tabnum">${actifs.length}</div></div>
+    <div class="card kpi c-mag"><span class="tick"></span><div class="lab">Dépenses liées</div><div class="val tabnum">${fcfa(DB.depenses.filter(d=>d.fournisseurId).reduce((s,d)=>s+(+d.ttc||0),0))}</div></div>
+    <div class="card kpi c-jaune"><span class="tick"></span><div class="lab">Secteurs</div><div class="val tabnum">${new Set(DB.fournisseurs.map(f=>f.secteur||"Autre")).size}</div></div>
+    <div class="card kpi c-noir"><span class="tick"></span><div class="lab">Fournisseurs inactifs</div><div class="val tabnum">${inactifs.length}</div></div>
+  </div>
+  <div class="card" style="overflow-x:auto"><table><thead><tr>
+    <th>Nom</th><th>Contact</th><th>Secteur</th><th>Téléphone</th><th>Email</th>
+    <th>Conditions</th><th>Dépenses</th><th>Statut</th><th></th>
+  </tr></thead><tbody>
+  ${DB.fournisseurs.map(f=>{
+    const depF=DB.depenses.filter(d=>(d.fournisseurId||d.fournisseur_id)===f.id).reduce((s,d)=>s+(+d.ttc||0),0);
+    return`<tr class="clk" onclick="openFournisseur('${f.id}')">
+      <td><div class="nm">${esc(f.nom)}</div><div class="meta">${esc(f.numeroContribuable||f.numero_contribuable||"")}</div></td>
+      <td class="meta">${esc(f.contact||"—")}</td>
+      <td><span class="seg">${esc(f.secteur||"—")}</span></td>
+      <td class="meta">${esc(f.tel||"—")}</td>
+      <td class="meta">${esc(f.email||"—")}</td>
+      <td class="meta">${esc(f.conditionsPaiement||f.conditions_paiement||"—")}</td>
+      <td class="r tabnum">${depF?fcfa(depF):"—"}</td>
+      <td>${f.actif!==false?'<span class="pill p-green"><span class="dot"></span>Actif</span>':'<span class="pill p-grey"><span class="dot"></span>Inactif</span>'}</td>
+      <td class="r" onclick="event.stopPropagation()"><button class="btn btn-sm btn-ghost act-edit" onclick="editFournisseur('${f.id}')">Modifier</button></td>
+    </tr>`;
+  }).join("")}
+  </tbody></table></div>`;
+}
+
+function openFournisseur(id){
+  const f=DB.fournisseurs.find(x=>x.id===id);if(!f)return;
+  const deps=DB.depenses.filter(d=>(d.fournisseurId||d.fournisseur_id)===id);
+  const totalDep=deps.reduce((s,d)=>s+(+d.ttc||0),0);
+  drawer(f.nom,f.secteur||"",
+    kv("Contact",f.contact)+kv("Téléphone",f.tel)+kv("Email",f.email)+
+    kv("Adresse",f.adresse)+kv("Secteur",f.secteur)+
+    kv("Conditions de paiement",f.conditionsPaiement||f.conditions_paiement)+
+    kv("N° Contribuable",f.numeroContribuable||f.numero_contribuable)+
+    kv("Compte bancaire",f.compteBancaire||f.compte_bancaire)+
+    kv("Notes",f.notes)+
+    (deps.length?`<div class="fieldset" style="margin-top:14px"><div class="fs-t">Dépenses (${deps.length}) — ${fcfa(totalDep)} TTC</div>
+      ${deps.slice(0,5).map(d=>`<div style="display:flex;justify-content:space-between;padding:4px 0">
+        <span>${esc(d.libelle)}</span><span class="tabnum">${fcfa(d.ttc)}</span></div>`).join("")}
+    </div>`:""),
+    [{label:"Modifier",cls:"btn-primary",edit:1,fn:`closeOverlays();editFournisseur('${id}')`}]
+  );
+}
+
+function editFournisseur(id){
+  if(!guard("fournisseurs"))return;
+  const f=id?DB.fournisseurs.find(x=>x.id===id):{nom:"",contact:"",secteur:"",tel:"",email:"",adresse:"",conditionsPaiement:"30 jours",compteBancaire:"",numeroContribuable:"",notes:"",actif:true};
+  const secteurs=["Impression","Fournitures de bureau","Informatique","Transport & Logistique","Services","Marketing","Alimentation","Maintenance","Autre"];
+  drawer(id?"Modifier le fournisseur":"Nouveau fournisseur","",
+    `<form id="f-fourn"><div class="row2">
+      <div class="field"><label>Nom *</label><input name="nom" value="${esc(f.nom)}" required></div>
+      <div class="field"><label>Interlocuteur</label><input name="contact" value="${esc(f.contact||"")}"></div>
+    </div><div class="row2">
+      <div class="field"><label>Secteur d'activité</label><select name="secteur">${secteurs.map(s=>`<option ${(f.secteur||"")==s?"selected":""}>${s}</option>`).join("")}</select></div>
+      <div class="field"><label>Conditions de paiement</label><input name="conditionsPaiement" value="${esc(f.conditionsPaiement||f.conditions_paiement||"30 jours")}"></div>
+    </div><div class="row2">
+      <div class="field"><label>Téléphone</label><input name="tel" value="${esc(f.tel||"")}"></div>
+      <div class="field"><label>Email</label><input name="email" type="email" value="${esc(f.email||"")}"></div>
+    </div>
+    <div class="field"><label>Adresse</label><input name="adresse" value="${esc(f.adresse||"")}"></div>
+    <div class="row2">
+      <div class="field"><label>N° Contribuable / IFU</label><input name="numeroContribuable" value="${esc(f.numeroContribuable||f.numero_contribuable||"")}"></div>
+      <div class="field"><label>Compte bancaire</label><input name="compteBancaire" value="${esc(f.compteBancaire||f.compte_bancaire||"")}"></div>
+    </div>
+    <div class="field"><label>Notes</label><textarea name="notes">${esc(f.notes||"")}</textarea></div>
+    <div class="field"><label>Statut</label><select name="actif"><option value="1" ${f.actif!==false?"selected":""}>Actif</option><option value="0" ${f.actif===false?"selected":""}>Inactif</option></select></div>
+    </form>`,
+    [id?{label:"Supprimer",cls:"btn-danger",fn:`delFournisseur('${id}')`}:null,
+     {label:id?"Enregistrer":"Créer",cls:"btn-primary",fn:`saveFournisseur('${id||""}')`}].filter(Boolean)
+  );
+}
+function saveFournisseur(id){
+  if(!guard("fournisseurs"))return;
+  const f=document.getElementById("f-fourn");const fd=new FormData(f);
+  if(!fd.get("nom").trim()){toast("Nom obligatoire");return}
+  const data={nom:fd.get("nom").trim(),contact:fd.get("contact"),secteur:fd.get("secteur"),tel:fd.get("tel"),email:fd.get("email"),adresse:fd.get("adresse"),conditionsPaiement:fd.get("conditionsPaiement"),compteBancaire:fd.get("compteBancaire"),numeroContribuable:fd.get("numeroContribuable"),notes:fd.get("notes"),actif:fd.get("actif")==="1"};
+  if(id){const x=DB.fournisseurs.find(f=>f.id===id);Object.assign(x,data);sync("fournisseurs",x);}
+  else{const x={...data,id:uid(),createdAt:new Date().toISOString()};DB.fournisseurs.push(x);sync("fournisseurs",x);}
+  closeOverlays();toast(id?"Fournisseur mis à jour":"Fournisseur créé");go("fournisseurs");
+}
+function delFournisseur(id){
+  if(!guard("fournisseurs"))return;
+  confirmModal("Supprimer ce fournisseur ?","Les dépenses liées ne seront pas supprimées.",()=>{
+    DB.fournisseurs=DB.fournisseurs.filter(x=>x.id!==id);syncDel("fournisseurs",id);closeOverlays();toast("Fournisseur supprimé");go("fournisseurs");
+  });
+}
+
+/* ============================================================
+   CATALOGUE V2 — Référence, Stock, Prix d'achat, Marge
+   ============================================================ */
+function viewCatalogue(){
+  if(!vis("catalogue"))return;
+  const cats=[...new Set(DB.products.map(p=>p.categorie||"Autre"))].sort();
+  const stockAlertes=DB.products.filter(p=>(p.stockActuel||p.stock_actuel||0)<=(p.stockMinimum||p.stock_minimum||0)&&(p.stockMinimum||p.stock_minimum||0)>0);
+
+  $("#pg-actions").innerHTML=`
+    <button class="btn" onclick="exportExcel('catalogue')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button>
+    <button class="btn btn-primary act-edit" onclick="editProduct()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouveau produit</button>`;
+
+  if(!DB.products.length){$("#view").innerHTML=emptyState("Catalogue vide","Ajoutez vos produits.","Nouveau produit","editProduct()");return;}
+
+  const totalRef=DB.products.length;
+  const valStock=DB.products.reduce((s,p)=>s+((p.stockActuel||p.stock_actuel||0)*(p.pu||0)),0);
+  const margeAvg=DB.products.filter(p=>p.prixAchat||p.prix_achat).length?
+    Math.round(DB.products.filter(p=>p.prixAchat||p.prix_achat).reduce((s,p)=>{const pa=p.prixAchat||p.prix_achat||0;return pa?s+((p.pu-pa)/p.pu*100):s},0)/DB.products.filter(p=>p.prixAchat||p.prix_achat).length):0;
+
+  let html=`<div class="grid kpis" style="margin-bottom:16px">
+    <div class="card kpi c-cyan"><span class="tick"></span><div class="lab">Références</div><div class="val tabnum">${totalRef}</div><div class="delta">${cats.length} catégories</div></div>
+    <div class="card kpi c-mag"><span class="tick"></span><div class="lab">Valeur stock</div><div class="val tabnum">${fcfa(valStock)}</div><div class="delta">HT</div></div>
+    <div class="card kpi ${stockAlertes.length?"c-mag":"c-jaune"}"><span class="tick"></span><div class="lab">Alertes stock</div><div class="val tabnum">${stockAlertes.length}</div><div class="delta">${stockAlertes.length?"articles sous minimum":"Tous les stocks OK"}</div></div>
+    <div class="card kpi c-noir"><span class="tick"></span><div class="lab">Marge moyenne</div><div class="val tabnum">${margeAvg}%</div><div class="delta">Sur articles avec prix achat</div></div>
+  </div>`;
+
+  if(stockAlertes.length){
+    html+=`<div class="card panel" style="margin-bottom:16px;border-left:3px solid var(--danger)">
+      <div class="panel-h"><h3 style="color:var(--danger)">⚠️ Alertes stock (${stockAlertes.length} articles)</h3></div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">${stockAlertes.slice(0,6).map(p=>`<span class="pill p-red"><span class="dot"></span>${esc(p.designation)} — stock: ${p.stockActuel||p.stock_actuel||0}</span>`).join("")}</div>
+    </div>`;
+  }
+
+  html+=cats.map(cat=>{
+    const prods=DB.products.filter(p=>(p.categorie||"Autre")===cat);
+    return`<div class="card" style="margin-bottom:16px">
+      <div class="panel-h" style="padding:12px 16px 0"><h3 style="font-size:13px;color:var(--txt-2)">${esc(cat)} <span class="micro">${prods.length} articles</span></h3></div>
+      <div style="overflow-x:auto"><table><thead><tr>
+        <th>Réf.</th><th>Désignation</th><th class="r">Prix vente HT</th><th class="r">Prix achat</th>
+        <th class="r">Marge</th><th class="c">TVA</th><th class="r">Prix TTC</th>
+        <th class="c">Stock</th><th class="c">Min.</th><th>Fournisseur</th><th></th>
+      </tr></thead><tbody>
+      ${prods.map(p=>{
+        const pa=p.prixAchat||p.prix_achat||0;
+        const marge=pa&&p.pu?Math.round((p.pu-pa)/p.pu*100):null;
+        const tva=p.tvaTaux||p.tva_taux||18;
+        const ttc=Math.round(p.pu*(1+tva/100));
+        const stock=p.stockActuel||p.stock_actuel||0;
+        const stmin=p.stockMinimum||p.stock_minimum||0;
+        const alerte=stmin>0&&stock<=stmin;
+        return`<tr class="clk" onclick="editProduct('${p.id}')">
+          <td class="meta" style="font-family:monospace;font-size:11px">${esc(p.reference||p.ref||"—")}</td>
+          <td><div class="nm">${esc(p.designation)}</div>${p.description?`<div class="meta">${esc(p.description.slice(0,50))}</div>`:""}</td>
+          <td class="r tabnum">${fcfa(p.pu)}</td>
+          <td class="r tabnum ${pa?"":" muted"}">${pa?fcfa(pa):"—"}</td>
+          <td class="r">
+            ${marge!==null?`<span class="pill ${marge>=30?"p-green":marge>=15?"p-amber":"p-red"}">${marge}%</span>`:"—"}</td>
+          <td class="c">${tva}%</td>
+          <td class="r tabnum">${fcfa(ttc)}</td>
+          <td class="c ${alerte?"text-danger":""}"><strong>${stock}</strong></td>
+          <td class="c muted">${stmin||"—"}</td>
+          <td class="meta">${esc(fournisseurName(p.fournisseurId||p.fournisseur_id))}</td>
+          <td class="r" onclick="event.stopPropagation()"><button class="btn btn-sm btn-ghost act-edit" onclick="editProduct('${p.id}')">Modifier</button></td>
+        </tr>`;
+      }).join("")}
+      </tbody></table></div></div>`;
+  }).join("");
+  $("#view").innerHTML=html;
+}
+
+function editProduct(id){
+  if(!guard("catalogue"))return;
+  const p=id?DB.products.find(x=>x.id===id):{designation:"",reference:"",description:"",categorie:"",pu:0,prixAchat:0,tvaTaux:18,stockActuel:0,stockMinimum:0,unite:"unité",fournisseurId:""};
+  const cats=["Impression","Grand format","Gadgets","Fournitures de bureau","Création","Bloc notes","Stylos","USB & Powerbanks","Sacs & Accessoires","Coffrets","Autre"];
+  const foOpts=DB.fournisseurs.filter(f=>f.actif!==false).map(f=>`<option value="${f.id}" ${(p.fournisseurId||p.fournisseur_id)===f.id?"selected":""}>${esc(f.nom)}</option>`).join("");
+  drawer(id?"Modifier le produit":"Nouveau produit","",
+    `<form id="f-prod">
+    <div class="row2">
+      <div class="field"><label>Désignation *</label><input name="designation" value="${esc(p.designation)}" required></div>
+      <div class="field"><label>Référence</label><input name="reference" value="${esc(p.reference||p.ref||"")}" style="font-family:monospace"></div>
+    </div>
+    <div class="field"><label>Description</label><textarea name="description" style="min-height:54px">${esc(p.description||"")}</textarea></div>
+    <div class="row2">
+      <div class="field"><label>Catégorie</label><select name="categorie">${cats.map(c=>`<option ${(p.categorie||"")==c?"selected":""}>${c}</option>`).join("")}</select></div>
+      <div class="field"><label>Unité</label><input name="unite" value="${esc(p.unite||"unité")}"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Prix vente HT (F CFA)</label><input name="pu" type="number" value="${p.pu||0}" min="0" id="p-pu" oninput="calcMargePrev()"></div>
+      <div class="field"><label>Prix d'achat HT (F CFA)</label><input name="prixAchat" type="number" value="${p.prixAchat||p.prix_achat||0}" min="0" id="p-pa" oninput="calcMargePrev()"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>TVA (%)</label><input name="tvaTaux" type="number" value="${p.tvaTaux||p.tva_taux||18}" min="0" max="100" id="p-tva" oninput="calcMargePrev()"></div>
+      <div class="field" id="marge-prev" style="padding-top:22px;font-size:13px"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Stock actuel</label><input name="stockActuel" type="number" value="${p.stockActuel||p.stock_actuel||0}" min="0"></div>
+      <div class="field"><label>Stock minimum (alerte)</label><input name="stockMinimum" type="number" value="${p.stockMinimum||p.stock_minimum||0}" min="0"></div>
+    </div>
+    <div class="field"><label>Fournisseur principal</label>
+      <select name="fournisseurId"><option value="">— Aucun —</option>${foOpts}</select></div>
+    </form>`,
+    [id?{label:"Supprimer",cls:"btn-danger",fn:`delProduct('${id}')`}:null,
+     {label:id?"Enregistrer":"Ajouter",cls:"btn-primary",fn:`saveProduct('${id||""}')`}].filter(Boolean)
+  );
+  setTimeout(calcMargePrev,50);
+}
+function calcMargePrev(){
+  const pu=+(document.getElementById("p-pu")||{}).value||0;
+  const pa=+(document.getElementById("p-pa")||{}).value||0;
+  const tva=+(document.getElementById("p-tva")||{}).value||18;
+  const el=document.getElementById("marge-prev");if(!el)return;
+  const ttc=Math.round(pu*(1+tva/100));
+  const marge=pu&&pa?Math.round((pu-pa)/pu*100):null;
+  el.innerHTML=`<div style="color:var(--txt-2);font-size:11px">Prix TTC</div>
+    <div style="font-weight:700;font-size:15px">${fcfa(ttc)}</div>
+    ${marge!==null?`<div class="pill ${marge>=30?"p-green":marge>=15?"p-amber":"p-red"}" style="margin-top:4px">Marge : ${marge}%</div>`:""}`;
+}
+function saveProduct(id){
+  if(!guard("catalogue"))return;
+  const f=document.getElementById("f-prod");const fd=new FormData(f);
+  if(!fd.get("designation").trim()){toast("Désignation obligatoire");return}
+  const data={designation:fd.get("designation"),reference:fd.get("reference"),description:fd.get("description"),categorie:fd.get("categorie"),pu:+fd.get("pu")||0,prixAchat:+fd.get("prixAchat")||0,tvaTaux:+fd.get("tvaTaux")||18,stockActuel:+fd.get("stockActuel")||0,stockMinimum:+fd.get("stockMinimum")||0,unite:fd.get("unite")||"unité",fournisseurId:fd.get("fournisseurId")||null};
+  if(id){const x=DB.products.find(p=>p.id===id);Object.assign(x,data);sync("products",x);}
+  else{const x={...data,id:uid(),createdAt:new Date().toISOString()};DB.products.push(x);sync("products",x);}
+  closeOverlays();toast(id?"Produit mis à jour":"Produit ajouté");go(current);
+}
+function delProduct(id){if(!guard("catalogue"))return;confirmModal("Supprimer ce produit ?","",()=>{DB.products=DB.products.filter(x=>x.id!==id);syncDel("products",id);closeOverlays();toast("Produit supprimé");go("catalogue")})}
+
+/* ============================================================
+   COMPTABILITÉ V2 — Journal, TVA déclaration, P&L, Trésorerie
+   ============================================================ */
+function viewCompta(){
+  if(!vis("compta"))return;
+  const now=new Date(),y=now.getFullYear(),m=now.getMonth();
+  const q=Math.floor(m/3);  // trimestre courant 0-3
+
+  // ── Calculs globaux ──
+  let caTotal=0,caEnc=0,tvaCollTot=0,tvaDedTot=0,depTot=0;
+  const caParMois=Array(12).fill(0);const encParMois=Array(12).fill(0);
+  DB.factures.forEach(f=>{
+    const d=new Date(f.date||f.createdAt);if(d.getFullYear()===y){caTotal+=f.montantHT||0;caParMois[d.getMonth()]+=(f.montantHT||0);}
+    (f.paiements||[]).forEach(p=>{const d2=new Date(p.date);if(d2.getFullYear()===y){caEnc+=+p.montant||0;encParMois[d2.getMonth()]+=+p.montant||0;tvaCollTot+=f.montantTVA?((f.montantTVA*(+p.montant/(f.montantTTC||1))||0)):0;}});
+  });
+  DB.depenses.forEach(d=>{depTot+=d.ttc||0;tvaDedTot+=d.tva||0;});
+  const tvaARevers=Math.round(tvaCollTot-tvaDedTot);
+  const resultat=Math.round(caEnc-depTot);
+  const impaye=DB.factures.reduce((s,f)=>s+Math.max(0,(f.montantTTC||0)-factPaid(f)),0);
+
+  // ── TVA par trimestre ──
+  const tvaParQ=Array(4).fill(null).map(()=>({coll:0,ded:0}));
+  DB.factures.forEach(f=>{(f.paiements||[]).forEach(p=>{const d=new Date(p.date);if(d.getFullYear()===y){const qi=Math.floor(d.getMonth()/3);tvaParQ[qi].coll+=f.montantTVA?f.montantTVA*(+p.montant/(f.montantTTC||1)):0;}});});
+  DB.depenses.forEach(d=>{if(d.date){const dd=new Date(d.date);if(dd.getFullYear()===y){const qi=Math.floor(dd.getMonth()/3);tvaParQ[qi].ded+=d.tva||0;}}});
+
+  // ── Vieillissement créances ──
+  const aged=[0,30,60,90].map((j,i,arr)=>({label:i===0?"< 30 j":`${j}–${arr[i+1]||999} j`,total:0,nb:0}));
+  DB.factures.filter(f=>factStatut(f)!=="payée").forEach(f=>{
+    const jours=f.echeance?Math.round((now-new Date(f.echeance))/86400000):0;
+    const reste=Math.max(0,(f.montantTTC||0)-factPaid(f));
+    const bucket=jours<0?0:jours<30?1:jours<60?2:3;
+    aged[bucket].total+=reste;aged[bucket].nb++;
+  });
+
+  const moisLabels=["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"];
+  const maxBar=Math.max(1,...caParMois,...encParMois);
+
+  $("#pg-actions").innerHTML=`
+    <button class="btn btn-primary act-edit" onclick="editDepense()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouvelle dépense</button>
+    <button class="btn" onclick="exportExcel('depenses')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button>`;
+
+  $("#view").innerHTML=`
+  <!-- KPIs -->
+  <div class="grid kpis" style="margin-bottom:16px">
+    <div class="card kpi c-cyan"><span class="tick"></span><div class="lab">CA Facturé ${y} (HT)</div><div class="val tabnum">${fcfa(Math.round(caTotal))}</div><div class="delta">Encaissé : ${fcfa(Math.round(caEnc))}</div></div>
+    <div class="card kpi c-mag"><span class="tick"></span><div class="lab">Reste à encaisser</div><div class="val tabnum">${fcfa(Math.round(impaye))}</div><div class="delta">${DB.factures.filter(f=>factStatut(f)!=="payée").length} facture(s) ouvertes</div></div>
+    <div class="card kpi ${tvaARevers>=0?"c-jaune":"c-cyan"}"><span class="tick"></span><div class="lab">TVA nette à reverser</div><div class="val tabnum">${fcfa(Math.round(tvaARevers))}</div><div class="delta">Collectée ${fcfa(Math.round(tvaCollTot))} / Déd. ${fcfa(Math.round(tvaDedTot))}</div></div>
+    <div class="card kpi ${resultat>=0?"c-cyan":"c-mag"}"><span class="tick"></span><div class="lab">Résultat ${y}</div><div class="val tabnum">${fcfa(resultat)}</div><div class="delta">Enc. ${fcfa(Math.round(caEnc))} − Dép. ${fcfa(Math.round(depTot))}</div></div>
+  </div>
+
+  <!-- Graphe CA + encaissements -->
+  <div class="two-13" style="margin-bottom:16px">
+    <div class="card panel">
+      <div class="panel-h"><h3>Évolution CA & Encaissements ${y}</h3><div class="spacer"></div><span class="micro">HT / mois</span></div>
+      <div style="overflow-x:auto"><div style="display:flex;align-items:flex-end;gap:6px;height:160px;padding-top:8px;min-width:400px">
+        ${caParMois.map((ca,i)=>{
+          const hCA=Math.max(4,Math.round(ca/maxBar*130));
+          const hEnc=Math.max(0,Math.round(encParMois[i]/maxBar*130));
+          return`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
+            <div style="font-size:9px;color:var(--txt-2);writing-mode:vertical-lr;transform:rotate(180deg);height:30px">${ca?fcfaPlain(ca):""}</div>
+            <div style="display:flex;align-items:flex-end;gap:2px">
+              <div style="width:10px;height:${hCA}px;background:var(--cyan);border-radius:3px 3px 0 0" title="CA HT : ${fcfa(ca)}"></div>
+              <div style="width:10px;height:${hEnc}px;background:var(--ok);border-radius:3px 3px 0 0" title="Encaissé : ${fcfa(encParMois[i])}"></div>
+            </div>
+            <div class="micro">${moisLabels[i]}</div>
+          </div>`;
+        }).join("")}
+      </div>
+      <div style="display:flex;gap:14px;margin-top:6px;font-size:11px">
+        <span><span style="display:inline-block;width:10px;height:10px;background:var(--cyan);border-radius:2px;margin-right:4px"></span>CA facturé HT</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:var(--ok);border-radius:2px;margin-right:4px"></span>Encaissements</span>
+      </div>
+    </div>
+
+    <!-- TVA par trimestre -->
+    <div class="card panel">
+      <div class="panel-h"><h3>TVA — Déclaration trimestrielle ${y}</h3></div>
+      ${tvaParQ.map((tq,i)=>{
+        const net=Math.round(tq.coll-tq.ded);
+        const label=["T1 (Jan–Mar)","T2 (Avr–Jun)","T3 (Jul–Sep)","T4 (Oct–Déc)"][i];
+        const isCurrent=i===q;
+        return`<div style="padding:8px 0;border-bottom:1px solid var(--ligne-2)${isCurrent?";background:var(--papier);margin:0 -8px;padding:8px":""}">
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px">
+            <strong style="font-size:12px">${label}${isCurrent?' <span class="seg" style="font-size:10px">En cours</span>':""}</strong>
+            <span class="pill ${net>=0?"p-amber":"p-green"}" style="font-size:10px">${net>=0?"À reverser":"Crédit"} : ${fcfa(Math.abs(net))}</span>
+          </div>
+          <div style="font-size:11px;color:var(--txt-2);display:flex;justify-content:space-between">
+            <span>Collectée : ${fcfa(Math.round(tq.coll))}</span>
+            <span>Déductible : ${fcfa(Math.round(tq.ded))}</span>
+          </div>
+        </div>`;
+      }).join("")}
+    </div>
+  </div>
+
+  <!-- Vieillissement créances + répartition dépenses -->
+  <div class="two" style="margin-bottom:16px">
+    <div class="card panel">
+      <div class="panel-h"><h3>📋 Vieillissement des créances</h3><div class="spacer"></div>
+        <span class="linkish" onclick="go('factures')">Voir factures</span></div>
+      ${aged.map(b=>`<div class="barrow">
+        <div class="lab">${b.label} <span class="muted">(${b.nb})</span></div>
+        <div class="bar"><i style="width:${Math.round(b.total/Math.max(1,impaye)*100)}%;background:var(--mag)"></i></div>
+        <div class="v tabnum">${fcfaPlain(b.total)}</div>
+      </div>`).join("")}
+      ${!impaye?`<div class="empty-sm">✅ Toutes les factures sont réglées</div>`:""}
+    </div>
+
+    <div class="card panel">
+      <div class="panel-h"><h3>💸 Dépenses par catégorie</h3></div>
+      ${Object.entries(DB.depenses.reduce((acc,d)=>{acc[d.categorie||"Autre"]=(acc[d.categorie||"Autre"]||0)+(+d.ttc||0);return acc},{}))
+        .sort((a,b)=>b[1]-a[1]).slice(0,6)
+        .map(([k,v])=>`<div class="barrow">
+          <div class="lab">${k}</div>
+          <div class="bar"><i style="width:${Math.round(v/Math.max(1,depTot)*100)}%;background:var(--noir)"></i></div>
+          <div class="v tabnum">${fcfaPlain(v)}</div>
+        </div>`).join("")||`<div class="empty-sm">Aucune dépense enregistrée</div>`}
+    </div>
+  </div>
+
+  <!-- Journal dépenses -->
+  <div class="card panel">
+    <div class="panel-h"><h3>📒 Journal des dépenses</h3><div class="spacer"></div><span class="micro">${DB.depenses.length} entrée(s)</span></div>
+    ${!DB.depenses.length?`<div class="empty-sm">Aucune dépense enregistrée.</div>`:`
+    <div style="overflow-x:auto"><table><thead><tr>
+      <th>Date</th><th>N° Pièce</th><th>Libellé</th><th>Fournisseur</th><th>Catégorie</th>
+      <th>Mode</th><th>Statut</th><th class="r">HT</th><th class="r">TVA</th><th class="r">TTC</th><th></th>
+    </tr></thead><tbody>
+    ${[...DB.depenses].sort((a,b)=>(b.date||"")>(a.date||"")?(1):(-1)).map(d=>`<tr>
+      <td class="meta">${fdate(d.date)}</td>
+      <td class="meta" style="font-family:monospace;font-size:11px">${esc(d.numeroPiece||d.numero_piece||"—")}</td>
+      <td class="nm">${esc(d.libelle)}</td>
+      <td class="meta">${esc(fournisseurName(d.fournisseurId||d.fournisseur_id))}</td>
+      <td><span class="seg">${esc(d.categorie||"—")}</span></td>
+      <td class="meta">${esc(d.modePaiement||d.mode_paiement||"—")}</td>
+      <td>${(d.statutPaiement||d.statut_paiement||"payé")==="payé"?'<span class="pill p-green"><span class="dot"></span>Payé</span>':'<span class="pill p-amber"><span class="dot"></span>En attente</span>'}</td>
+      <td class="r tabnum">${fcfa(d.ht)}</td><td class="r tabnum">${fcfa(d.tva)}</td><td class="r tabnum">${fcfa(d.ttc)}</td>
+      <td class="r"><button class="btn btn-sm btn-ghost act-edit" onclick="editDepense('${d.id}')">Modifier</button></td>
+    </tr>`).join("")}
+    </tbody></table></div>`}
+  </div>`;
+}
+
+function editDepense(id){
+  if(!guard("compta"))return;
+  const d=id?DB.depenses.find(x=>x.id===id):{date:todayISO(),libelle:"",numeroPiece:"",categorie:"",fournisseurId:"",modePaiement:"Virement",statutPaiement:"payé",echeance:"",ht:0,tva:0,ttc:0};
+  const cats=["Achats matières","Charges fixes","Services externes","Frais de déplacement","Marketing","Maintenance","Loyer","Salaires","Impôts & taxes","Autre"];
+  const modes=["Virement","Espèces","Chèque","Mobile Money","Carte bancaire"];
+  const foOpts=DB.fournisseurs.filter(f=>f.actif!==false).map(f=>`<option value="${f.id}" ${(d.fournisseurId||d.fournisseur_id)===f.id?"selected":""}>${esc(f.nom)}</option>`).join("");
+  drawer(id?"Modifier la dépense":"Nouvelle dépense","",
+    `<form id="f-dep">
+    <div class="row2">
+      <div class="field"><label>Libellé *</label><input name="libelle" value="${esc(d.libelle)}" required></div>
+      <div class="field"><label>N° Pièce / Facture fournisseur</label><input name="numeroPiece" value="${esc(d.numeroPiece||d.numero_piece||"")}" style="font-family:monospace"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Date</label><input name="date" type="date" value="${d.date||todayISO()}"></div>
+      <div class="field"><label>Échéance</label><input name="echeance" type="date" value="${d.echeance||""}"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Catégorie</label><select name="categorie">${cats.map(c=>`<option ${(d.categorie||"")==c?"selected":""}>${c}</option>`).join("")}</select></div>
+      <div class="field"><label>Fournisseur</label><select name="fournisseurId"><option value="">— Aucun —</option>${foOpts}</select></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Mode de paiement</label><select name="modePaiement">${modes.map(m=>`<option ${(d.modePaiement||d.mode_paiement||"Virement")===m?"selected":""}>${m}</option>`).join("")}</select></div>
+      <div class="field"><label>Statut paiement</label><select name="statutPaiement">
+        <option value="payé" ${(d.statutPaiement||d.statut_paiement||"payé")==="payé"?"selected":""}>Payé</option>
+        <option value="en attente" ${(d.statutPaiement||d.statut_paiement)==="en attente"?"selected":""}>En attente</option>
+      </select></div>
+    </div>
+    <div class="row3">
+      <div class="field"><label>Montant HT (F)</label><input name="ht" type="number" value="${d.ht||0}" min="0" oninput="autoTTC()"></div>
+      <div class="field"><label>TVA (F)</label><input name="tva" type="number" value="${d.tva||0}" min="0" oninput="autoTTC()"></div>
+      <div class="field"><label>Total TTC (F)</label><input name="ttc" id="dep-ttc" type="number" value="${d.ttc||0}" min="0"></div>
+    </div></form>`,
+    [id?{label:"Supprimer",cls:"btn-danger",fn:`delDepense('${id}')`}:null,
+     {label:id?"Enregistrer":"Ajouter",cls:"btn-primary",fn:`saveDepense('${id||""}')`}].filter(Boolean)
+  );
+}
+function saveDepense(id){
+  if(!guard("compta"))return;
+  const f=document.getElementById("f-dep");const fd=new FormData(f);
+  if(!fd.get("libelle").trim()){toast("Libellé obligatoire");return}
+  const dep={id:id||uid(),date:fd.get("date"),libelle:fd.get("libelle"),numeroPiece:fd.get("numeroPiece"),categorie:fd.get("categorie"),fournisseurId:fd.get("fournisseurId")||null,modePaiement:fd.get("modePaiement"),statutPaiement:fd.get("statutPaiement"),echeance:fd.get("echeance")||null,ht:+fd.get("ht")||0,tva:+fd.get("tva")||0,ttc:+fd.get("ttc")||0,createdAt:id?(DB.depenses.find(x=>x.id===id)||{}).createdAt||new Date().toISOString():new Date().toISOString()};
+  if(id)DB.depenses=DB.depenses.map(x=>x.id===id?dep:x); else DB.depenses.push(dep);
+  sync("depenses",dep);closeOverlays();toast(id?"Dépense mise à jour":"Dépense ajoutée");go(current);
+}
+function delDepense(id){if(!guard("compta"))return;confirmModal("Supprimer cette dépense ?","",()=>{DB.depenses=DB.depenses.filter(x=>x.id!==id);syncDel("depenses",id);closeOverlays();toast("Dépense supprimée");go("compta")})}
+
