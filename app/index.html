@@ -27,7 +27,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/app/css/style.css?v=11">
+  <link rel="stylesheet" href="/app/css/style.css?v=12">
 </head>
 <body>
 
@@ -45,18 +45,31 @@
       </div>
     </div>
     <nav class="nav" id="nav">
+      <!-- ── PRINCIPAL ── -->
       <a data-route="dashboard"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="11" width="8" height="10" rx="1.5"/><rect x="3" y="14" width="8" height="7" rx="1.5"/></svg>Tableau de bord</a>
-      <div class="sec">Relation client</div>
+
+      <!-- ── TIERS ── -->
+      <div class="sec">Tiers</div>
       <a data-route="clients"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><path d="M16 7.5a3 3 0 0 1 0 5.6M17 19c.3-2.4-.8-4.2-2.2-5"/></svg>Clients &amp; prospects<span class="badge" id="b-clients">0</span></a>
+      <a data-route="fournisseurs"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3H8a2 2 0 0 0-2 2v2h12V5a2 2 0 0 0-2-2z"/><path d="M12 12v4M10 14h4"/></svg>Fournisseurs</a>
+
+      <!-- ── VENTES ── -->
       <div class="sec">Ventes</div>
       <a data-route="devis"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2.5h8l4 4V21a.5.5 0 0 1-.5.5h-11A.5.5 0 0 1 6 21z"/><path d="M14 2.5V6.5h4M9 12h6M9 15.5h6"/></svg>Devis<span class="badge" id="b-devis">0</span></a>
       <a data-route="factures"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 2.5h14v19l-2.3-1.5-2.3 1.5-2.4-1.5L9.3 21 7 19.5 4.7 21 5 2.5z" stroke-linejoin="round"/><path d="M8.5 8h7M8.5 12h7M8.5 15.5h4"/></svg>Factures<span class="badge" id="b-factures">0</span></a>
       <a data-route="commandes"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="14" rx="1.6"/><path d="M3 8h18M7 12h5"/></svg>Commandes &amp; projets<span class="badge" id="b-commandes">0</span></a>
-      <div class="sec">Gestion</div>
+
+      <!-- ── FINANCES ── -->
+      <div class="sec">Finances</div>
       <a data-route="compta"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="3" width="16" height="18" rx="1.6"/><path d="M8 7h8M8 11h3M14 11h2M8 14.5h3M14 14.5h2M8 18h3"/></svg>Comptabilité &amp; TVA</a>
-      <a data-route="catalogue"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8l9-5 9 5-9 5z" stroke-linejoin="round"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/></svg>Catalogue</a>
+
+      <!-- ── CATALOGUE ── -->
+      <div class="sec">Catalogue</div>
+      <a data-route="catalogue"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8l9-5 9 5-9 5z" stroke-linejoin="round"/><path d="M3 8v8l9 5 9-5V8M12 13v8"/></svg>Produits &amp; services</a>
+
+      <!-- ── ADMINISTRATION ── -->
+      <div class="sec">Administration</div>
       <a data-route="users"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c0-3 2.4-4.8 5.5-4.8s5.5 1.8 5.5 4.8"/><circle cx="18" cy="6.5" r="2"/><path d="M16 13c2 .2 3.6 1.7 3.6 3.9"/></svg>Utilisateurs &amp; rôles</a>
-      <a data-route="fournisseurs"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3H8a2 2 0 0 0-2 2v2h12V5a2 2 0 0 0-2-2z"/><path d="M12 12v4M10 14h4"/></svg>Fournisseurs</a>
       <a data-route="parametres"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l1.7-1.3-1.8-3-2 .8a7.5 7.5 0 0 0-2.6-1.5L14 2h-4l-.4 2a7.5 7.5 0 0 0-2.6 1.5l-2-.8-1.8 3 1.7 1.3a7.6 7.6 0 0 0 0 3L3.2 14.8l1.8 3 2-.8a7.5 7.5 0 0 0 2.6 1.5l.4 2h4l.4-2a7.5 7.5 0 0 0 2.6-1.5l2 .8 1.8-3z"/></svg>Paramètres</a>
     </nav>
     <div class="cmykbar"><i></i><i></i><i></i><i></i></div>
@@ -104,8 +117,8 @@
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="/app/js/config.js?v=11"></script>
-<script src="/app/js/app.js?v=11"></script>
+<script src="/app/js/config.js?v=12"></script>
+<script src="/app/js/app.js?v=12"></script>
 
 <script>
 if ('serviceWorker' in navigator) {
