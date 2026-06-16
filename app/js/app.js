@@ -313,6 +313,273 @@ function pill(k){const p=PILL[k]||["p-grey",k];return`<span class="pill ${p[0]}"
 function tableMini(rows,fn,empty){if(!rows.length)return`<div class="empty-sm">${empty}</div>`;return`<div style="overflow-x:auto"><table><tbody>${rows.map(fn).join("")}</tbody></table></div>`}
 
 /* ============================================================
+   SYNCHRONISATION DOLIBARR
+   API REST : /api/index.php/thirdparties + /products
+   Auth : header DOLAPIKEY
+   ============================================================ */
+const DOL_KEY = "creatis_dolibarr_config";
+function getDolConfig(){ try{return JSON.parse(localStorage.getItem(DOL_KEY)||"{}")}catch(e){return {}} }
+function saveDolConfig(c){ try{localStorage.setItem(DOL_KEY,JSON.stringify(c))}catch(e){} }
+
+function viewDokira(){
+  const cfg=getDolConfig();
+  $("#pg-title").textContent="Synchronisation Dolibarr";
+  $("#pg-sub").textContent="Import clients & produits depuis votre Dolibarr";
+  $("#pg-actions").innerHTML="";
+  $("#view").innerHTML=`
+  <div class="card panel" style="margin-bottom:16px">
+    <div class="panel-h"><h3>⚙️ Connexion Dolibarr</h3><div class="spacer"></div>
+    <a href="https://wiki.dolibarr.org/index.php/Module_Web_Services_API_REST_(developer)" target="_blank" class="btn btn-sm btn-ghost" style="font-size:11px">📖 Doc API</a></div>
+    <div class="two" style="gap:12px">
+      <div class="field"><label>URL Dolibarr (sans /api/...)</label>
+        <input id="dol-url" placeholder="https://gestion.creatis-ci.com" value="${esc(cfg.url||"")}" style="font-family:monospace;font-size:12px">
+        <div style="font-size:10.5px;color:var(--txt-3);margin-top:3px">ex : https://mondomaine.com/dolibarr</div></div>
+      <div class="field"><label>Clé API (DOLAPIKEY)</label>
+        <input id="dol-apikey" type="password" placeholder="Votre clé API Dolibarr" value="${esc(cfg.apiKey||"")}">
+        <div style="font-size:10.5px;color:var(--txt-3);margin-top:3px">Dolibarr → Profil utilisateur → Générer la clé API</div></div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px">
+      <button class="btn btn-primary" onclick="saveDolSettings()">💾 Enregistrer</button>
+      <button class="btn" onclick="dolTest()">🔌 Tester la connexion</button>
+      <button class="btn btn-ghost" onclick="showDolFileImport()">📂 Import fichier JSON</button>
+    </div>
+    <div id="dol-status" style="margin-top:10px;font-size:12.5px"></div>
+  </div>
+  <div class="two" style="gap:16px">
+    <div class="card panel">
+      <div class="panel-h"><h3>👥 Clients & Prospects</h3><div class="spacer"></div><span id="dol-clients-count" class="micro" style="color:var(--txt-3)"></span></div>
+      <p style="font-size:12.5px;color:var(--txt-2);margin-bottom:12px">Tiers Dolibarr : client=1 (client), client=2 (prospect), client=3 (les deux).</p>
+      <div class="field"><label>Filtre</label>
+        <select id="dol-client-mode" style="width:100%">
+          <option value="0" ${(cfg.clientMode||"0")==="0"?"selected":""}>Tous (clients + prospects)</option>
+          <option value="1" ${(cfg.clientMode||"0")==="1"?"selected":""}>Clients uniquement</option>
+          <option value="2" ${(cfg.clientMode||"0")==="2"?"selected":""}>Prospects uniquement</option>
+        </select></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+        <button class="btn" onclick="dolPreview('clients')">👁 Aperçu</button>
+        <button class="btn btn-primary" onclick="dolImport('clients')">⬇️ Importer</button></div>
+      <div id="dol-clients-log" style="margin-top:10px;max-height:220px;overflow-y:auto;font-size:11.5px;line-height:1.8"></div>
+    </div>
+    <div class="card panel">
+      <div class="panel-h"><h3>📦 Produits & Services</h3><div class="spacer"></div><span id="dol-products-count" class="micro" style="color:var(--txt-3)"></span></div>
+      <p style="font-size:12.5px;color:var(--txt-2);margin-bottom:12px">Catalogue Dolibarr : produits (type=0) et services (type=1).</p>
+      <div class="field"><label>Type</label>
+        <select id="dol-product-type" style="width:100%">
+          <option value="all"     ${(cfg.productType||"all")==="all"    ?"selected":""}>Produits + Services</option>
+          <option value="product" ${(cfg.productType||"all")==="product"?"selected":""}>Produits uniquement</option>
+          <option value="service" ${(cfg.productType||"all")==="service"?"selected":""}>Services uniquement</option>
+        </select></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+        <button class="btn" onclick="dolPreview('products')">👁 Aperçu</button>
+        <button class="btn btn-primary" onclick="dolImport('products')">⬇️ Importer</button></div>
+      <div id="dol-products-log" style="margin-top:10px;max-height:220px;overflow-y:auto;font-size:11.5px;line-height:1.8"></div>
+    </div>
+  </div>
+  <div class="two" style="gap:16px;margin-top:16px">
+    <div class="card panel">
+      <div class="panel-h"><h3>🔄 Sync complète</h3></div>
+      <p style="font-size:12.5px;color:var(--txt-2);margin-bottom:10px">Clients ET produits en une seule opération.</p>
+      <div style="font-size:12.5px;margin-bottom:12px"><strong>Dernière sync :</strong>
+        <span style="color:var(--txt-2)">${cfg.lastSync?new Date(cfg.lastSync).toLocaleString("fr-FR"):"Jamais"}</span></div>
+      <button class="btn btn-mag" style="width:100%;justify-content:center" onclick="dolSync()">🔄 Tout synchroniser</button>
+    </div>
+    <div class="card panel">
+      <div class="panel-h"><h3>⚡ Conflits</h3></div>
+      <p style="font-size:12.5px;color:var(--txt-2);margin-bottom:12px">Que faire si une entrée existe déjà dans le CRM ?</p>
+      <label style="display:flex;align-items:center;gap:10px;padding:8px;background:var(--papier);border-radius:8px;margin-bottom:8px;cursor:pointer;font-size:13px">
+        <input type="radio" name="dol-conflict" value="skip" ${(cfg.conflict||"skip")==="skip"?"checked":""} onchange="saveDolConflict(this.value)">
+        <div><strong>Ignorer</strong><div style="font-size:11px;color:var(--txt-2)">Garder la version CRM</div></div></label>
+      <label style="display:flex;align-items:center;gap:10px;padding:8px;background:var(--papier);border-radius:8px;cursor:pointer;font-size:13px">
+        <input type="radio" name="dol-conflict" value="update" ${(cfg.conflict||"skip")==="update"?"checked":""} onchange="saveDolConflict(this.value)">
+        <div><strong>Mettre à jour</strong><div style="font-size:11px;color:var(--txt-2)">Écraser avec Dolibarr</div></div></label>
+    </div>
+  </div>`;
+}
+
+function saveDolSettings(){
+  const cfg=getDolConfig();
+  cfg.url=(document.getElementById("dol-url")||{}).value?.trim().replace(/\/+$/,"")||"";
+  cfg.apiKey=(document.getElementById("dol-apikey")||{}).value?.trim()||"";
+  cfg.clientMode=(document.getElementById("dol-client-mode")||{}).value||"0";
+  cfg.productType=(document.getElementById("dol-product-type")||{}).value||"all";
+  saveDolConfig(cfg);
+  const s=document.getElementById("dol-status");
+  if(s)s.innerHTML=`<span style="color:var(--ok)">✅ Enregistré</span>`;
+  toast("Configuration Dolibarr sauvegardée");
+}
+function saveDolConflict(v){const c=getDolConfig();c.conflict=v;saveDolConfig(c);}
+
+async function dolFetch(path,params={}){
+  const cfg=getDolConfig();
+  if(!cfg.url||!cfg.apiKey) throw new Error("URL et clé API requises — enregistrez d'abord.");
+  const qs=new URLSearchParams({limit:500,page:0,...params}).toString();
+  const url=`${cfg.url}/api/index.php${path}?${qs}`;
+  const resp=await fetch(url,{headers:{"DOLAPIKEY":cfg.apiKey,"Accept":"application/json"},mode:"cors"});
+  if(resp.status===401) throw new Error("Clé API invalide (401).");
+  if(resp.status===403) throw new Error("Accès refusé — vérifiez les droits de l'utilisateur (403).");
+  if(!resp.ok){const t=await resp.text().catch(()=>"");throw new Error(`HTTP ${resp.status} — ${t.slice(0,100)}`);}
+  const data=await resp.json();
+  return Array.isArray(data)?data:(data.data||data.items||[data]);
+}
+
+async function dolTest(){
+  saveDolSettings();
+  const s=document.getElementById("dol-status");
+  if(s)s.innerHTML=`⏳ Connexion à Dolibarr…`;
+  try{
+    const rows=await dolFetch("/thirdparties",{limit:3});
+    const sample=rows[0]||{};
+    const fields=Object.keys(sample).filter(k=>sample[k]!=null).slice(0,12).join(", ");
+    if(s)s.innerHTML=`<span style="color:var(--ok);font-weight:600">✅ Connexion réussie — ${rows.length} tiers récupérés (aperçu 3)</span>
+      <div style="margin-top:5px;font-size:11px;color:var(--txt-2)">Champs : <strong>${esc(fields)}…</strong></div>
+      <pre style="margin-top:6px;font-size:10px;background:#f5f5f7;padding:8px;border-radius:4px;overflow-x:auto;max-height:130px">${esc(JSON.stringify(sample,null,2).slice(0,800))}</pre>`;
+    toast("✅ Dolibarr connecté !");
+  }catch(e){
+    if(s)s.innerHTML=`<span style="color:var(--danger);font-weight:600">❌ ${esc(e.message)}</span>
+      <div style="margin-top:8px;font-size:12px;color:var(--txt-2)">
+        Si c'est une erreur CORS : activez CORS dans votre Dolibarr/Apache,<br>
+        ou utilisez l'import via fichier JSON (bouton ci-dessus).</div>`;
+  }
+}
+
+function _dolSegment(code){
+  const m={"PME":"PME","TPE":"PME","TE":"PME","GE":"Grand compte","ETI":"Grand compte",
+            "GRP":"Grand compte","ASS":"Collectivité","ADM":"Collectivité","COL":"Collectivité"};
+  return m[String(code||"").toUpperCase()]||"PME";
+}
+function mapDolClient(row){
+  const t=parseInt(row.client)||0;
+  return {
+    nom:     row.name||row.nom||"",
+    contact: [row.firstname||"",row.lastname||""].filter(Boolean).join(" "),
+    type:    t===2?"prospect":"client",
+    segment: _dolSegment(row.typent_code||""),
+    tel:     row.phone||row.phone_mobile||"",
+    email:   row.email||"",
+    adresse: [row.address||"",row.zip||"",row.town||"",row.country_code||""].filter(Boolean).join(", "),
+    source:  "Dolibarr",
+    notes:   row.note_public||"",
+  };
+}
+function mapDolProduct(row){
+  const type=parseInt(row.type)||0;
+  return {
+    designation: row.label||row.ref||"",
+    categorie:   type===1?"Services":"Impression",
+    pu:          Math.round(parseFloat(row.price||row.cost_price||0)||0),
+    unite:       row.unit_short||row.unit||"unité",
+  };
+}
+
+async function dolPreview(type){
+  const el=document.getElementById(`dol-${type}-log`);
+  if(el)el.innerHTML="⏳ Chargement…";
+  try{
+    const cfg=getDolConfig();
+    const path=type==="clients"?"/thirdparties":"/products";
+    const extra=type==="clients"?{mode:cfg.clientMode||0}:{status:1};
+    const rows=await dolFetch(path,{...extra,limit:5});
+    const countEl=document.getElementById(`dol-${type}-count`);
+    if(countEl)countEl.textContent=`~${rows.length} (aperçu 5)`;
+    const mapped=rows.map(type==="clients"?mapDolClient:mapDolProduct);
+    if(el)el.innerHTML=`<strong>Aperçu mappé pour le CRM :</strong>
+      <pre style="font-size:10px;background:#f5f5f7;padding:6px;border-radius:4px;overflow-x:auto;max-height:160px">${esc(JSON.stringify(mapped,null,2))}</pre>`;
+  }catch(e){if(el)el.innerHTML=`<span style="color:var(--danger)">❌ ${esc(e.message)}</span>`;}
+}
+
+async function dolImport(type){
+  const el=document.getElementById(`dol-${type}-log`);
+  const cfg=getDolConfig();
+  if(el)el.innerHTML="⏳ Import en cours…";
+  try{
+    let all=[],page=0;
+    while(true){
+      const path=type==="clients"?"/thirdparties":"/products";
+      const extra=type==="clients"?{mode:cfg.clientMode||0}:{status:1};
+      const rows=await dolFetch(path,{...extra,limit:500,page});
+      if(!rows.length)break;
+      all.push(...rows);
+      if(rows.length<500)break;
+      page++;
+    }
+    let added=0,skipped=0,updated=0;
+    const log=[];
+    for(const row of all){
+      const item=type==="clients"?mapDolClient(row):mapDolProduct(row);
+      const key=type==="clients"?"nom":"designation";
+      if(!item[key]?.trim()){skipped++;continue;}
+      const arr=type==="clients"?DB.clients:DB.products;
+      const tbl=type==="clients"?"clients":"products";
+      const exists=arr.find(x=>(x[key]||"").toLowerCase()===item[key].toLowerCase());
+      if(exists){
+        if(cfg.conflict==="update"){Object.assign(exists,item);sync(tbl,exists);updated++;log.push(`🔄 ${item[key]}`);}
+        else{skipped++;log.push(`⏭ ${item[key]}`);}
+      }else{
+        const n={...item,id:uid(),createdAt:new Date().toISOString()};
+        arr.push(n);sync(tbl,n);added++;log.push(`✅ ${item[key]}`);
+      }
+    }
+    cfg.lastSync=new Date().toISOString();saveDolConfig(cfg);refreshBadges();
+    if(el)el.innerHTML=`<div style="font-weight:600;color:var(--ok)">✅ ${all.length} traités : ${added} ajouté(s), ${updated} mis à jour, ${skipped} ignoré(s)</div>`+log.map(l=>`<div>${l}</div>`).join("");
+    toast(`✅ Dolibarr : ${added} ${type==="clients"?"clients":"produits"} importé(s)`);
+  }catch(e){
+    if(el)el.innerHTML=`<span style="color:var(--danger)">❌ ${esc(e.message)}</span>
+      <button class="btn btn-sm" style="margin-top:8px" onclick="showDolFileImport()">📂 Importer via fichier JSON</button>`;
+  }
+}
+
+async function dolSync(){
+  toast("🔄 Synchronisation Dolibarr…");
+  try{await dolImport("clients");await dolImport("products");toast("✅ Synchronisation Dolibarr terminée !");}
+  catch(e){toast("❌ "+e.message);}
+}
+
+function showDolFileImport(){
+  modal(`<h3 style="margin-bottom:10px">📂 Import export JSON Dolibarr</h3>
+    <p class="muted" style="margin-bottom:12px">Depuis Dolibarr : <strong>Liste → Exporter → JSON ou CSV</strong></p>
+    <div class="field"><label>Type</label><select id="dol-file-type">
+      <option value="clients">Tiers / Clients</option><option value="products">Produits / Services</option>
+    </select></div>
+    <div class="field"><label>Fichier JSON ou CSV</label><input type="file" id="dol-file-input" accept=".json,.csv"></div>`,
+    [{label:"Annuler",fn:"closeModal()"},{label:"Importer",cls:"btn-primary",fn:"dolFileImport()"}]
+  );
+}
+
+async function dolFileImport(){
+  const type=(document.getElementById("dol-file-type")||{}).value||"clients";
+  const file=(document.getElementById("dol-file-input")||{}).files?.[0];
+  if(!file){toast("Sélectionnez un fichier");return;}
+  closeModal();
+  const reader=new FileReader();
+  reader.onload=async e=>{
+    try{
+      let raw;
+      if(file.name.endsWith(".csv")){
+        const lines=e.target.result.split("\n").filter(Boolean);
+        const headers=lines[0].split(";").map(h=>h.replace(/"/g,"").trim());
+        raw=lines.slice(1).map(l=>{const v=l.split(";").map(x=>x.replace(/"/g,"").trim());return Object.fromEntries(headers.map((h,i)=>[h,v[i]||""]));});
+      }else{raw=JSON.parse(e.target.result);}
+      const rows=Array.isArray(raw)?raw:(raw.data||raw.items||[raw]);
+      const cfg=getDolConfig();let added=0,skipped=0,updated=0;const log=[];
+      for(const row of rows){
+        const item=type==="clients"?mapDolClient(row):mapDolProduct(row);
+        const key=type==="clients"?"nom":"designation";
+        if(!item[key]?.trim()){skipped++;continue;}
+        const arr=type==="clients"?DB.clients:DB.products;const tbl=type==="clients"?"clients":"products";
+        const exists=arr.find(x=>(x[key]||"").toLowerCase()===item[key].toLowerCase());
+        if(exists){if(cfg.conflict==="update"){Object.assign(exists,item);sync(tbl,exists);updated++;log.push(`🔄 ${item[key]}`);}else{skipped++;log.push(`⏭ ${item[key]}`);}}
+        else{const n={...item,id:uid(),createdAt:new Date().toISOString()};arr.push(n);sync(tbl,n);added++;log.push(`✅ ${item[key]}`);}
+      }
+      cfg.lastSync=new Date().toISOString();saveDolConfig(cfg);refreshBadges();
+      const el=document.getElementById(`dol-${type}-log`);
+      if(el)el.innerHTML=`<div style="font-weight:600;color:var(--ok)">✅ ${added} ajouté(s), ${updated} mis à jour, ${skipped} ignoré(s)</div>`+log.map(l=>`<div>${l}</div>`).join("");
+      toast(`✅ Import : ${added} ${type==="clients"?"clients":"produits"}`);
+    }catch(err){toast("❌ Fichier invalide : "+err.message);}
+  };
+  reader.readAsText(file);
+}
+
+/* ============================================================
    ROUTING
    ============================================================ */
 const ROUTES={
