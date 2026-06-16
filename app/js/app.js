@@ -97,12 +97,12 @@ async function dbUpsertSettings(settings){
 
 // Sync optimiste : met à jour l'état local PUIS sync Supabase en fond
 function sync(table, obj){
-  const supaTable = {users:"profiles", settings:"app_settings"}[table]||table;
+  const supaTable = {users:"crm_users", roles:"crm_roles", settings:"app_settings"}[table]||table;
   if(table==="settings"){ dbUpsertSettings(DB.settings).catch(e=>console.error(e)); return; }
   dbUpsert(supaTable, obj).catch(e=>console.error(e));
 }
 function syncDel(table, id){
-  const supaTable = {users:"profiles"}[table]||table;
+  const supaTable = {users:"crm_users", roles:"crm_roles"}[table]||table;
   dbDelete(supaTable, id).catch(e=>console.error(e));
 }
 
@@ -113,8 +113,8 @@ async function loadAll(){
   const [settingsRow, rolesRows, usersRows, clientsRows, productsRows,
          devisRows, facturesRows, commandesRows, depensesRows] = await Promise.all([
     dbFetchOne("app_settings"),
-    dbFetch("roles","created_at"),
-    dbFetch("profiles","created_at"),
+    dbFetch("crm_roles","created_at"),
+    dbFetch("crm_users","created_at"),
     dbFetch("clients","created_at"),
     dbFetch("products","designation"),
     dbFetch("devis","created_at"),
@@ -146,7 +146,7 @@ async function loadAll(){
   } else {
     DB.roles = defaultRoles();
     DB.roles.forEach(r=>{
-      SB.from("roles").upsert(toDb({...r, systemRole:r.system}),{onConflict:"id"}).catch(e=>console.error(e));
+      SB.from("crm_roles").upsert(toDb({...r, systemRole:r.system}),{onConflict:"id"}).catch(e=>console.error(e));
     });
   }
 
