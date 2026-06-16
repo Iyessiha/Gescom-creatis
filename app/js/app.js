@@ -192,50 +192,21 @@ const LOGO_SVG=`<svg width="34" height="34" viewBox="0 0 40 40" fill="none"><cir
 
 function renderAuth(){
   document.body.classList.add("auth-on");
-  const onboard=!(DB.users&&DB.users.length);
-  const co=DB.settings.company||{};
+  const co=DB.settings?.company||{};
   $("#auth").innerHTML=`<div class="auth-bg"></div><div class="auth-card"><div class="auth-cmyk"><i></i><i></i><i></i><i></i></div>
     <div class="auth-body">
       <div class="auth-brand">${LOGO_SVG}<div><div class="ab-n">CREATIS STUDIO</div><div class="ab-s">CRM</div></div></div>
-      ${onboard?`
-        <h3>Bienvenue 👋</h3><p class="muted">Créez le compte administrateur pour démarrer.</p>
-        <form id="f-onb" onsubmit="return false">
-          <div class="field"><label>Votre nom</label><input id="onb-name" autocomplete="name" required></div>
-          <div class="field"><label>Identifiant de connexion</label><input id="onb-login" autocomplete="username" required></div>
-          <div class="row2">
-            <div class="field"><label>Mot de passe</label><input id="onb-pwd" type="password" required></div>
-            <div class="field"><label>Confirmer</label><input id="onb-pwd2" type="password" required></div>
-          </div>
-          <div id="onb-err" class="auth-err"></div>
-          <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="doOnboard()">Créer le compte & entrer</button>
-        </form>`:`
-        <h3>Connexion</h3><p class="muted">Espace ${esc(co.name||"Creatis Studio")}</p>
-        <form id="f-login" onsubmit="return false">
-          <div class="field"><label>Identifiant</label><input id="li-login" autocomplete="username" required></div>
-          <div class="field"><label>Mot de passe</label><input id="li-pwd" type="password" autocomplete="current-password" required></div>
-          <div id="login-err" class="auth-err"></div>
-          <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="doLogin()">Se connecter</button>
-        </form>`}
+      <h3>Connexion</h3>
+      <p class="muted">Espace ${esc(co.name||"Creatis Studio")}</p>
+      <form id="f-login" onsubmit="return false">
+        <div class="field"><label>Identifiant</label><input id="li-login" autocomplete="username" required></div>
+        <div class="field"><label>Mot de passe</label><input id="li-pwd" type="password" autocomplete="current-password" required></div>
+        <div id="login-err" class="auth-err"></div>
+        <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="doLogin()">Se connecter</button>
+      </form>
     </div></div>`;
   $("#auth").classList.add("show");
   setTimeout(()=>{ const i=$("#auth input"); if(i)i.focus(); },60);
-}
-
-async function doOnboard(){
-  const name=($("#onb-name")||{}).value?.trim();
-  const login=($("#onb-login")||{}).value?.trim();
-  const pw=($("#onb-pwd")||{}).value||"";
-  const pw2=($("#onb-pwd2")||{}).value||"";
-  const err=$("#onb-err");
-  if(!name||!login||!pw){if(err)err.textContent="Remplissez tous les champs.";return}
-  if(pw!==pw2){if(err)err.textContent="Les mots de passe ne correspondent pas.";return}
-  if(err)err.textContent="Création…";
-  const u={id:uid(),name,login,roleId:"administrateur",active:true,pass:await passHash(login,pw),createdAt:Date.now()};
-  const ok = await dbUpsert("profiles", u);
-  if(!ok){if(err)err.textContent="Erreur de création. Vérifiez Supabase.";return}
-  DB.users.push(u);
-  enterApp(u);
-  toast("Compte administrateur créé");
 }
 async function doLogin(){
   const login=($("#li-login")||{}).value?.trim().toLowerCase()||"";

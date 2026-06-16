@@ -201,3 +201,18 @@ INSERT INTO roles (id, name, color, system_role, perms, widgets) VALUES
   '{"dashboard":"view","clients":"edit","devis":"view","factures":"none","commandes":"view","compta":"none","catalogue":"view","users":"none","parametres":"none"}'::jsonb,
   ARRAY['kpi_leads','kpi_devis','list_relance'])
 ON CONFLICT (id) DO NOTHING;
+
+-- ============================================================
+-- COMPTE ADMIN PAR DÉFAUT
+-- Login : admin  |  Mot de passe : Admin2025!
+-- À changer après le premier accès via Utilisateurs & rôles
+-- ============================================================
+INSERT INTO profiles (id, name, login, role_id, active, pass)
+VALUES (
+  gen_random_uuid(),
+  'Administrateur',
+  'admin',
+  'administrateur',
+  true,
+  '49930b8655862f6db7db2c82a544a2256a850f7e9dc46d34f7fa5c805045c217'
+) ON CONFLICT (login) DO NOTHING;
