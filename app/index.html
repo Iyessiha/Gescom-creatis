@@ -9,10 +9,19 @@
   <title>Creatis Studio — CRM</title>
   <link rel="manifest" href="/app/manifest.webmanifest">
   <meta name="theme-color" content="#1A1A1C">
+  <!-- PWA — iOS -->
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Creatis CRM">
   <link rel="apple-touch-icon" href="/icon-180.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png">
+  <link rel="apple-touch-icon" sizes="512x512" href="/icon-512.png">
+  <!-- PWA — Android / Desktop -->
+  <meta name="application-name" content="Creatis CRM">
+  <meta name="msapplication-TileColor" content="#1A1A1C">
+  <meta name="msapplication-TileImage" content="/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
   <link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -63,6 +72,17 @@
       <div class="spacer"></div>
       <div class="search hide-sm"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A8E97" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg><input id="globalSearch" placeholder="Rechercher…"></div>
       <div id="pg-actions"></div>
+      <button id="pwa-install-btn" onclick="installPWA()" title="Installer l'application"
+        style="display:none;align-items:center;gap:6px;padding:7px 14px;
+               border-radius:30px;border:1.5px solid var(--cyan);
+               background:rgba(0,174,239,.08);color:var(--cyan);
+               font-weight:700;font-size:12px;cursor:pointer;
+               transition:.15s;flex:0 0 auto;white-space:nowrap">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <path d="M12 2v13M7 10l5 5 5-5"/><path d="M20 17v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2"/>
+        </svg>
+        Installer l'app
+      </button>
       <div id="userchip" class="hide-sm"></div>
     </header>
     <div class="content" id="view">
