@@ -314,6 +314,206 @@ const PILL={
 function pill(k){const p=PILL[k]||["p-grey",k];return`<span class="pill ${p[0]}"><span class="dot"></span>${p[1]}</span>`}
 function tableMini(rows,fn,empty){if(!rows.length)return`<div class="empty-sm">${empty}</div>`;return`<div style="overflow-x:auto"><table><tbody>${rows.map(fn).join("")}</tbody></table></div>`}
 
+
+/* ============================================================
+   MODULE FNE — Certification DGI Côte d'Ivoire
+   API REST : /api/index.php → /api/fne (proxy Vercel)
+   Doc DGI : https://www.dgi.gouv.ci/assets/documents/FNE-procedureapi.pdf
+   ============================================================ */
+
+const FNE_CONFIG_KEY = "creatis_fne_config";
+function getFneConfig(){ try{return JSON.parse(localStorage.getItem(FNE_CONFIG_KEY)||"{}")}catch(e){return{}} }
+function saveFneConfig(c){ try{localStorage.setItem(FNE_CONFIG_KEY,JSON.stringify(c))}catch(e){} }
+
+// Statut FNE → badge HTML
+function fneBadge(f){
+  const st = f.fneStatus || f.fne_status || "non_certifiee";
+  const map = {
+    "certifiee":     `<span class="pill p-green" style="font-size:10px"><span class="dot"></span>FNE Certifiée ✓</span>`,
+    "en_attente":    `<span class="pill p-amber" style="font-size:10px"><span class="dot"></span>FNE En attente</span>`,
+    "erreur":        `<span class="pill p-red"   style="font-size:10px"><span class="dot"></span>FNE Erreur</span>`,
+    "non_certifiee": `<span class="pill p-grey"  style="font-size:10px"><span class="dot"></span>Non certifiée</span>`,
+  };
+  return map[st] || map["non_certifiee"];
+}
+
+// Certifier une facture via l'API FNE DGI
+async function certifierFNE(factureId){
+  const cfg = getFneConfig();
+  if(!cfg.apiKey || !cfg.apiUrl){
+    toast("⚠️ Configurez d'abord la clé API FNE dans Paramètres → FNE");
+    return go("parametres");
+  }
+  const f = DB.factures.find(x=>x.id===factureId);
+  if(!f){ toast("Facture introuvable"); return; }
+  const co = DB.settings.company || {};
+  const cli = DB.clients.find(x=>x.id===f.clientId) || {};
+
+  // Mettre en attente
+  f.fneStatus = "en_attente";
+  sync("factures", f);
+  toast("⏳ Certification FNE en cours…");
+
+  // Construire le payload DGI
+  const payload = {
+    invoiceType:        "SALE",
+    paymentMethod:      cfg.paymentMethod || "TRANSFER",
+    template:           cli.ncc ? "B2B" : "B2C",
+    isRne:              false,
+    clientNcc:          cli.ncc || "",
+    clientCompanyName:  cli.nom || clientName(f.clientId),
+    clientPhone:        parseInt((cli.tel||"").replace(/\D/g,"")) || 0,
+    clientEmail:        cli.email || "",
+    pointOfSale:        cfg.pointOfSale || co.name || "CREATIS STUDIO",
+    establishment:      co.name || "CREATIS STUDIO",
+    commercialMessage:  f.notes || "",
+    items: (f.lignes||[]).map(l=>({
+      description: l.designation || "",
+      quantity:    parseFloat(l.qte) || 1,
+      unitPrice:   parseFloat(l.pu) || 0,
+      discount:    parseFloat(l.remise) || 0,
+      taxType:     ["TVA"],
+    })),
+  };
+
+  try {
+    const resp = await fetch("/api/fne", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ apiKey: cfg.apiKey, apiUrl: cfg.apiUrl, action: "sign", payload }),
+    });
+    const data = await resp.json();
+
+    if(!resp.ok || data.error){
+      f.fneStatus = "erreur";
+      sync("factures", f);
+      toast("❌ Erreur FNE : " + (data.error || data.message || resp.status));
+      return;
+    }
+
+    // Succès — stocker les données FNE
+    f.fneStatus      = "certifiee";
+    f.fneNumber      = data.invoiceNumber || data.fneNumber || data.number || "";
+    f.fneQrUrl       = data.qrCodeUrl     || data.qrCode   || data.tokenUrl || "";
+    f.fneInvoiceId   = data.id            || data.invoiceId || "";
+    f.fneCertifiedAt = new Date().toISOString();
+    sync("factures", f);
+    refreshBadges();
+    toast("✅ Facture FNE certifiée : " + f.fneNumber);
+    closeOverlays();
+    go("factures");
+  } catch(err){
+    f.fneStatus = "erreur";
+    sync("factures", f);
+    toast("❌ Erreur réseau : " + err.message);
+  }
+}
+
+// Section FNE dans viewParametres
+function renderFneSettings(){
+  const cfg = getFneConfig();
+  return `
+  <div class="card panel" style="margin-top:16px;border-left:3px solid #00843D">
+    <div class="panel-h">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:32px;height:32px;background:#00843D;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:14px">f</div>
+        <div>
+          <h3>Facture Normalisée Électronique (FNE)</h3>
+          <div style="font-size:11px;color:var(--txt-2)">Intégration API DGI — Côte d'Ivoire</div>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <a href="https://services.fne.dgi.gouv.ci" target="_blank" class="btn btn-sm btn-ghost" style="font-size:11px">🔗 Plateforme FNE</a>
+    </div>
+    <div class="two" style="gap:12px;margin-bottom:14px">
+      <div class="field">
+        <label>URL API DGI</label>
+        <select id="fne-url-select" onchange="document.getElementById('fne-url').value=this.value">
+          <option value="http://54.247.95.108/ws" ${(cfg.apiUrl||"")==="http://54.247.95.108/ws"?"selected":""}>Environnement TEST — http://54.247.95.108/ws</option>
+          <option value="custom" ${cfg.apiUrl&&cfg.apiUrl!=="http://54.247.95.108/ws"?"selected":""}>Production (URL fournie par DGI)</option>
+        </select>
+        <input id="fne-url" style="margin-top:6px;font-family:monospace;font-size:11px"
+          placeholder="URL de production fournie par la DGI"
+          value="${esc(cfg.apiUrl||"http://54.247.95.108/ws")}">
+      </div>
+      <div class="field">
+        <label>Clé API (Bearer Token)</label>
+        <input id="fne-key" type="password" placeholder="Disponible dans Paramétrage de votre espace FNE"
+               value="${esc(cfg.apiKey||"")}">
+        <div style="font-size:10.5px;color:var(--txt-3);margin-top:3px">
+          Espace FNE → onglet <strong>Paramétrage</strong> → Clé API
+        </div>
+      </div>
+    </div>
+    <div class="row2" style="gap:12px;margin-bottom:14px">
+      <div class="field">
+        <label>Point de vente</label>
+        <input id="fne-pdv" placeholder="ex : Siège Social Cocody" value="${esc(cfg.pointOfSale||"")}">
+      </div>
+      <div class="field">
+        <label>Mode de paiement par défaut</label>
+        <select id="fne-payment">
+          <option value="TRANSFER" ${(cfg.paymentMethod||"TRANSFER")==="TRANSFER"?"selected":""}>Virement bancaire</option>
+          <option value="CASH"     ${(cfg.paymentMethod||"")==="CASH"?"selected":""}>Espèces</option>
+          <option value="CHECK"    ${(cfg.paymentMethod||"")==="CHECK"?"selected":""}>Chèque</option>
+          <option value="MOBILE"   ${(cfg.paymentMethod||"")==="MOBILE"?"selected":""}>Mobile Money</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-primary" style="background:#00843D;border-color:#00843D" onclick="saveFneSettings()">💾 Enregistrer</button>
+      <button class="btn" onclick="testFneConnection()">🔌 Tester la connexion</button>
+      <div style="font-size:11px;color:var(--txt-3);flex:1">
+        <strong>Étapes :</strong>
+        1) S'inscrire sur <a href="https://services.fne.dgi.gouv.ci" target="_blank" style="color:var(--cyan)">services.fne.dgi.gouv.ci</a> —
+        2) Récupérer la clé API dans Paramétrage —
+        3) Tester ici —
+        4) Envoyer les spécimens à <a href="mailto:support.fne@dgi.gouv.ci" style="color:var(--cyan)">support.fne@dgi.gouv.ci</a> —
+        5) Recevoir l'URL de production
+      </div>
+    </div>
+    <div id="fne-status" style="margin-top:10px;font-size:12.5px"></div>
+  </div>`;
+}
+
+function saveFneSettings(){
+  const cfg = {
+    apiUrl:        document.getElementById("fne-url")?.value?.trim()||"",
+    apiKey:        document.getElementById("fne-key")?.value?.trim()||"",
+    pointOfSale:   document.getElementById("fne-pdv")?.value?.trim()||"",
+    paymentMethod: document.getElementById("fne-payment")?.value||"TRANSFER",
+  };
+  saveFneConfig(cfg);
+  const s=document.getElementById("fne-status");
+  if(s)s.innerHTML=`<span style="color:var(--ok)">✅ Configuration FNE enregistrée</span>`;
+  toast("Configuration FNE sauvegardée");
+}
+
+async function testFneConnection(){
+  saveFneSettings();
+  const s=document.getElementById("fne-status");
+  if(s)s.innerHTML="⏳ Test de connexion à la DGI…";
+  const cfg=getFneConfig();
+  if(!cfg.apiKey||!cfg.apiUrl){if(s)s.innerHTML=`<span style="color:var(--danger)">❌ URL et clé API requises</span>`;return;}
+  try{
+    const resp=await fetch("/api/fne",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({apiKey:cfg.apiKey,apiUrl:cfg.apiUrl,action:"sign",
+        payload:{invoiceType:"SALE",paymentMethod:"TRANSFER",template:"B2C",isRne:false,
+          clientCompanyName:"TEST",clientPhone:0,clientEmail:"test@test.ci",
+          pointOfSale:"TEST",establishment:"TEST",items:[{description:"TEST",quantity:1,unitPrice:0,discount:0,taxType:["TVA"]}]}})});
+    const data=await resp.json();
+    if(resp.status===401){if(s)s.innerHTML=`<span style="color:var(--danger)">❌ Clé API invalide (401) — Vérifiez votre clé dans l'espace FNE</span>`;return;}
+    if(resp.status===400&&data){if(s)s.innerHTML=`<span style="color:var(--ok)">✅ Connexion DGI établie (réponse : ${JSON.stringify(data).slice(0,80)})</span>`;return;}
+    if(s)s.innerHTML=`<span style="color:var(--ok)">✅ API DGI accessible — Code : ${resp.status}</span>`;
+  }catch(e){
+    if(s)s.innerHTML=`<span style="color:var(--danger)">❌ ${esc(e.message)}</span>
+      <div style="font-size:11.5px;color:var(--txt-2);margin-top:6px">
+        Si le proxy renvoie une erreur réseau, vérifiez que l'URL DGI est accessible.<br>
+        Environnement TEST : http://54.247.95.108/ws (disponible uniquement après inscription)
+      </div>`;
+  }
+}
+
 /* ============================================================
    ROUTING
    ============================================================ */
@@ -478,7 +678,7 @@ function docList(kind){
   const isF=kind==="factures";const list=DB[kind];
   $("#pg-actions").innerHTML=`<button class="btn" onclick="exportExcel('${kind}')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editDoc('${kind}')"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${isF?"Nouvelle facture":"Nouveau devis"}</button>`;
   if(!list.length){$("#view").innerHTML=emptyState(isF?"Aucune facture":"Aucun devis","",isF?"Nouvelle facture":"Nouveau devis",`editDoc('${kind}')`);return}
-  $("#view").innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Numéro</th><th>Client</th><th>Date</th><th>${isF?"Échéance":"Validité"}</th><th class="r">Total TTC</th><th>Statut</th><th></th></tr></thead><tbody>
+  $("#view").innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Numéro</th><th>Client</th><th>Date</th><th>${isF?"Échéance":"Validité"}</th><th class="r">Total TTC</th><th>Statut</th><th>FNE</th><th></th></tr></thead><tbody>
     ${list.map(d=>`<tr class="clk" onclick="${isF?`openFacture`:`openDevis`}('${d.id}')">
       <td><div class="nm tabnum">${esc(d.numero)}</div></td>
       <td class="meta">${esc(clientName(d.clientId))}</td>
@@ -486,6 +686,7 @@ function docList(kind){
       <td class="meta">${isF?fdate(d.echeance):fdate(d.validite)}</td>
       <td class="r tabnum">${fcfa(d.montantTTC)}</td>
       <td>${pill(isF?factStatut(d):d.statut)}</td>
+      <td style="font-size:10px">${isF?fneBadge(d):""}</td>
       <td class="r" onclick="event.stopPropagation()"><button class="btn btn-sm btn-ghost act-edit" onclick="editDoc('${kind}','${d.id}')">Modifier</button></td>
     </tr>`).join("")}
   </tbody></table></div>`;
@@ -506,6 +707,7 @@ function openFacture(id){
   const st=factStatut(f);
   drawer(f.numero,clientName(f.clientId),docView(f,"factures"),
     [st!=="payée"?{label:"Enregistrer paiement",cls:"btn-mag",edit:1,fn:`payModal('${id}')`}:null,
+     (f.fneStatus!=="certifiee")?{label:"🔒 Certifier FNE",cls:"btn",edit:1,fn:`certifierFNE('${id}')`}:null,
      {label:"Imprimer",cls:"btn-ghost",fn:`printDoc('factures','${id}')`}
     ].filter(Boolean));
 }
@@ -702,9 +904,9 @@ function printDoc(kind,id){
       <div style="text-align:right">
         <!-- QR Code placeholder -->
         <div style="display:flex;justify-content:flex-end;align-items:flex-start;gap:12px;margin-bottom:10px">
-          <!-- QR code simulé -->
-          <div style="width:80px;height:80px;border:2px solid #1A1A1C;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden">
-            <svg width="70" height="70" viewBox="0 0 70 70" fill="none">
+          <!-- QR code FNE (réel si certifiée, simulé sinon) -->
+          <div style="width:80px;height:80px;border:2px solid ${d.fneQrUrl||d.fne_qr_url?"#00843D":"#1A1A1C"};display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden">
+          ${d.fneQrUrl||d.fne_qr_url?`<img src="${d.fneQrUrl||d.fne_qr_url}" style="width:76px;height:76px;object-fit:contain" alt="QR FNE">`:`<svg width="70" height="70" viewBox="0 0 70 70" fill="none">
               <!-- Coins QR -->
               <rect x="4" y="4" width="20" height="20" rx="2" stroke="#1A1A1C" stroke-width="3" fill="none"/>
               <rect x="8" y="8" width="12" height="12" fill="#1A1A1C"/>
@@ -739,7 +941,7 @@ function printDoc(kind,id){
               <rect x="58" y="58" width="4" height="4" fill="#1A1A1C"/>
               <rect x="40" y="52" width="4" height="4" fill="#1A1A1C"/>
               <rect x="46" y="58" width="4" height="4" fill="#1A1A1C"/>
-            </svg>
+            </svg>`}
           </div>
           <!-- Logo FNE -->
           <div style="border:2px solid #1A1A1C;border-radius:4px;padding:4px 8px;width:90px;text-align:center">
@@ -751,10 +953,12 @@ function printDoc(kind,id){
           </div>
         </div>
 
-        <!-- Numéro de facture -->
-        <div style="font-size:14px;font-weight:700;color:#1A1A1C;margin-bottom:14px;text-align:right">
+        <!-- Numéro de facture + FNE -->
+        <div style="font-size:14px;font-weight:700;color:#1A1A1C;margin-bottom:6px;text-align:right">
           ${type_label} N° ${esc(d.numero||"")}
         </div>
+        ${(d.fneNumber||d.fne_number)?`<div style="font-size:10px;font-weight:700;color:#00843D;text-align:right;margin-bottom:8px;font-family:monospace">FNE : ${esc(d.fneNumber||d.fne_number)}</div>`:""}
+        ${(d.fneCertifiedAt||d.fne_certified_at)?`<div style="font-size:9px;color:#777;text-align:right">Certifiée le ${new Date(d.fneCertifiedAt||d.fne_certified_at).toLocaleString("fr-FR")}</div>`:""}
 
         <!-- CLIENT -->
         <div style="border:1px solid #ccc;border-radius:4px;padding:10px 14px;text-align:left;min-width:220px;font-size:11px;line-height:1.9">
@@ -1070,6 +1274,7 @@ function viewParametres(){
       <div class="field"><label>Devise</label><input name="devise" value="${esc(s.devise||"F CFA")}"></div>
     </div></form>
   </div>
+  ${renderFneSettings()}
   <div class="card panel" style="margin-top:16px"><div class="panel-h"><h3>Sauvegarde</h3></div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="exportExcel('all')" style="background:#1D6F42;border-color:#1D6F42;color:#fff">
