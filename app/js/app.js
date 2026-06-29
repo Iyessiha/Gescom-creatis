@@ -309,6 +309,9 @@ function fcfa(n){n=Math.round(n||0);return n.toLocaleString("fr-FR").replace(/\u
 function fcfaPlain(n){n=Math.round(n||0);if(n>=1000000)return (n/1000000).toFixed(1).replace(".",",")+"M";if(n>=1000)return(n/1000).toFixed(0)+"k";return n+""}
 function fdate(d){if(!d)return"—";return new Date(d).toLocaleDateString("fr-FR",{day:"2-digit",month:"short",year:"2-digit"})}
 function todayISO(){return new Date().toISOString().slice(0,10)}
+const BAT_LABELS={non_demarre:"⚪ Pas démarré",en_cours:"🎨 En création",bat_envoye:"📤 BAT envoyé",en_revision:"🔄 Révisions",bat_approuve:"✅ BAT approuvé",en_impression:"🖨️ En impression"};
+const BAT_COLORS={non_demarre:"var(--txt-3)",en_cours:"var(--cyan)",bat_envoye:"var(--jaune)",en_revision:"var(--mag)",bat_approuve:"var(--ok)",en_impression:"#7D3C98"};
+function batBadge(st){const l=BAT_LABELS[st]||st,c=BAT_COLORS[st]||"var(--txt-2)";return`<span style="padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;background:${c}18;color:${c};border:1px solid ${c}40">${l}</span>`;}
 function clientName(id){const c=DB.clients.find(x=>x.id===id);return c?c.nom:"—"}
 function esc(s){if(s==null||s===undefined)return"";return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
 function toast(msg,dur=2800){const t=$("#toast");if(!t)return;t.textContent=msg;t.classList.add("show");clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),dur)}
@@ -1754,7 +1757,7 @@ function printDoc(kind,id){
 
 function viewCommandes(){
   if(!vis("commandes"))return;
-  $("#pg-actions").innerHTML=`<button class="btn" onclick="exportExcel('commandes')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editCmd()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouvelle commande</button>`;
+  $("#pg-actions").innerHTML=`<button class="btn" onclick="go('infographistes')" style="border-color:var(--cyan);color:var(--cyan)">👥 Tableau infographistes</button><button class="btn" onclick="exportExcel('commandes')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editCmd()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouvelle commande</button>`;
   if(!DB.commandes.length){$("#view").innerHTML=emptyState("Aucune commande","Créez votre première commande.","Nouvelle commande","editCmd()");return}
   const cols=CMD_FLOW.map(([k,l])=>({k,l,items:DB.commandes.filter(c=>c.statut===k)}));
   $("#view").innerHTML=`<div class="kanban">${cols.map(col=>`
@@ -1762,6 +1765,8 @@ function viewCommandes(){
     ${col.items.map(c=>{const late=c.deadline&&new Date(c.deadline)<new Date()&&c.statut!=="livré"&&c.statut!=="facturé";return`<div class="kard ${late?"late":""}" onclick="openCmd('${c.id}')">
       <div class="kard-t">${esc(c.titre)}</div>
       <div class="kard-m"><span>${esc(clientName(c.clientId))}</span>${c.deadline?`<span class="${late?"text-danger":""}">${fdate(c.deadline)}</span>`:""}</div>
+      ${(()=>{const u=DB.users.find(x=>x.id===(c.responsableId||c.responsable_id));return u?`<div style="font-size:10px;color:var(--cyan);margin-top:3px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">👤 ${esc(u.name)}</div>`:""})()}
+      ${(c.statutBat||c.statut_bat)&&(c.statutBat||c.statut_bat)!=="non_demarre"?`<div style="margin-top:4px">${batBadge(c.statutBat||c.statut_bat)}</div>`:""}
     </div>`}).join("")}
     </div>`).join("")}</div>`;
 }
@@ -3995,4 +4000,175 @@ function exportFiscaliteExcel(){
   XLSX.utils.book_append_sheet(wb,ws,"Fiscalité");
   XLSX.writeFile(wb,`Fiscalite_${co.name||"CRM"}_${y}.xlsx`);
   toast("✅ Fiche fiscale exportée");
+}
+
+/* ============================================================
+   SUIVI INFOGRAPHISTES
+   Vue par designer : projets en cours, BAT, charge de travail
+   ============================================================ */
+function viewInfographistes(){
+  if(!vis("infographistes"))return;
+  const dev = DB.settings.devise||"F CFA";
+
+  // Tous les utilisateurs avec au moins 1 commande assignée + les non assignées
+  const assignees = DB.users.filter(u=>u.active!==false);
+  const commandes = DB.commandes||[];
+
+  // Commandes actives (pas livrées/facturées)
+  const actives = commandes.filter(c=>c.statut!=="livré"&&c.statut!=="facturé");
+  const nonAssignees = actives.filter(c=>!c.responsableId&&!c.responsable_id);
+
+  const now = new Date();
+
+  const batOrder = {non_demarre:0,en_cours:1,bat_envoye:2,en_revision:3,bat_approuve:4,en_impression:5};
+
+  $("#pg-title").textContent = "Suivi infographistes";
+  $("#pg-sub").textContent   = `${actives.length} projet(s) actif(s) · ${nonAssignees.length} non assigné(s)`;
+  $("#pg-actions").innerHTML = `
+    <button class="btn" onclick="go('commandes')">📋 Voir le Kanban</button>
+    <button class="btn btn-primary act-edit" onclick="editCmd()">+ Nouvelle commande</button>`;
+
+  // KPIs globaux
+  const enRetard = actives.filter(c=>c.deadline&&new Date(c.deadline)<now);
+  const batEnvoye= actives.filter(c=>(c.statutBat||c.statut_bat)==="bat_envoye");
+  const enRevision= actives.filter(c=>(c.statutBat||c.statut_bat)==="en_revision");
+
+  $("#view").innerHTML = `
+  <div class="grid kpis" style="margin-bottom:16px">
+    <div class="card kpi c-cyan"><span class="tick"></span>
+      <div class="lab">Projets actifs</div><div class="val">${actives.length}</div>
+      <div class="delta">${assignees.length} infographiste(s)</div></div>
+    <div class="card kpi ${nonAssignees.length?"c-jaune":"c-noir"}"><span class="tick"></span>
+      <div class="lab">Non assignés</div>
+      <div class="val" style="color:${nonAssignees.length?"var(--warn)":"inherit"}">${nonAssignees.length}</div>
+      <div class="delta">Sans infographiste</div></div>
+    <div class="card kpi ${enRetard.length?"c-rouge":"c-noir"}"><span class="tick"></span>
+      <div class="lab">En retard</div>
+      <div class="val" style="color:${enRetard.length?"var(--danger)":"inherit"}">${enRetard.length}</div>
+      <div class="delta">Deadline dépassée</div></div>
+    <div class="card kpi c-mag"><span class="tick"></span>
+      <div class="lab">BAT en attente</div>
+      <div class="val">${batEnvoye.length+enRevision.length}</div>
+      <div class="delta">${batEnvoye.length} envoyé · ${enRevision.length} en révision</div></div>
+  </div>
+
+  <!-- Tableau par infographiste -->
+  <div style="display:flex;flex-direction:column;gap:14px">
+
+    ${assignees.map(u=>{
+      const myCmds = actives.filter(c=>(c.responsableId||c.responsable_id)===u.id)
+        .sort((a,b)=>{
+          // Trier par : en retard d'abord, puis par statut BAT, puis deadline
+          const la=a.deadline&&new Date(a.deadline)<now, lb=b.deadline&&new Date(b.deadline)<now;
+          if(la&&!lb)return -1; if(!la&&lb)return 1;
+          const ba=batOrder[a.statutBat||a.statut_bat||"non_demarre"]||0;
+          const bb=batOrder[b.statutBat||b.statut_bat||"non_demarre"]||0;
+          return bb-ba;
+        });
+      if(!myCmds.length) return "";
+      const late = myCmds.filter(c=>c.deadline&&new Date(c.deadline)<now).length;
+      const r = roleOf(u);
+      return`<div class="card panel">
+        <div class="panel-h">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:36px;height:36px;border-radius:50%;background:var(--cyan)18;border:2px solid var(--cyan);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:var(--cyan)">${esc((u.name||"?")[0].toUpperCase())}</div>
+            <div>
+              <div style="font-size:15px;font-weight:700">${esc(u.name||"")}</div>
+              <div style="font-size:11px;color:var(--txt-2)">${esc(r?.name||"")} · ${myCmds.length} projet(s)${late?` · <span style="color:var(--danger);font-weight:600">${late} en retard</span>`:""}</div>
+            </div>
+          </div>
+          <div class="spacer"></div>
+          <div style="display:flex;gap:6px;align-items:center">
+            ${["en_cours","bat_envoye","en_revision","bat_approuve"].map(st=>{
+              const n=myCmds.filter(c=>(c.statutBat||c.statut_bat)===st).length;
+              return n?batBadge(st).replace("</span>",` (${n})</span>`):"";
+            }).join("")}
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+        <table><thead><tr>
+          <th>N°</th><th>Projet</th><th>Client</th>
+          <th>Deadline</th><th>Statut BAT</th><th>Révisions</th><th>Format</th><th></th>
+        </tr></thead><tbody>
+        ${myCmds.map(c=>{
+          const isLate=c.deadline&&new Date(c.deadline)<now;
+          return`<tr ${isLate?"style=\"background:#FDE8E815\""  :""}>
+            <td class="meta tabnum">${esc(c.numero||"")}</td>
+            <td><div class="nm">${esc(c.titre||"")}</div>${c.brief?`<div class="meta" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.brief)}</div>`:""}</td>
+            <td class="meta">${esc(clientName(c.clientId))}</td>
+            <td class="meta" style="white-space:nowrap;color:${isLate?"var(--danger)":""};font-weight:${isLate?"700":"400"}">
+              ${c.deadline?fdate(c.deadline):"—"}${isLate?` ⚠️`:""}
+            </td>
+            <td>${batBadge(c.statutBat||c.statut_bat||"non_demarre")}</td>
+            <td class="meta" style="text-align:center">${c.nbRevisions||c.nb_revisions||0}</td>
+            <td class="meta" style="font-size:11px">${esc(c.formatLivraison||c.format_livraison||"—")}</td>
+            <td style="white-space:nowrap">
+              ${wr("commandes")?`
+              <button class="btn btn-sm btn-ghost" onclick="editCmd('${c.id}')" title="Modifier">✏️</button>
+              <button class="btn btn-sm btn-ghost" onclick="changerBat('${c.id}')" title="Changer statut BAT">🔄</button>`:""}
+            </td>
+          </tr>`;
+        }).join("")}
+        </tbody></table>
+        </div>
+      </div>`;
+    }).filter(Boolean).join("")}
+
+    <!-- Projets non assignés -->
+    ${nonAssignees.length?`
+    <div class="card panel" style="border-left:3px solid var(--warn)">
+      <div class="panel-h">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:20px">⚠️</span>
+          <div>
+            <div style="font-size:15px;font-weight:700">Projets non assignés</div>
+            <div style="font-size:11px;color:var(--txt-2)">${nonAssignees.length} commande(s) sans infographiste</div>
+          </div>
+        </div>
+        <div class="spacer"></div>
+      </div>
+      <table><thead><tr><th>N°</th><th>Projet</th><th>Client</th><th>Deadline</th><th>Statut</th><th></th></tr></thead><tbody>
+      ${nonAssignees.map(c=>{
+        const isLate=c.deadline&&new Date(c.deadline)<now;
+        return`<tr>
+          <td class="meta tabnum">${esc(c.numero||"")}</td>
+          <td><div class="nm">${esc(c.titre||"")}</div></td>
+          <td class="meta">${esc(clientName(c.clientId))}</td>
+          <td class="meta" style="color:${isLate?"var(--danger)":""}">
+            ${c.deadline?fdate(c.deadline):"—"}${isLate?" ⚠️":""}
+          </td>
+          <td>${pill(c.statut)}</td>
+          <td>${wr("commandes")?`<button class="btn btn-sm" onclick="editCmd('${c.id}')">Assigner</button>`:""}</td>
+        </tr>`;
+      }).join("")}
+      </tbody></table>
+    </div>`:""}
+  </div>`;
+}
+
+// Changer rapidement le statut BAT depuis le tableau infographistes
+function changerBat(cmdId){
+  if(!wr("commandes"))return;
+  const c=DB.commandes.find(x=>x.id===cmdId); if(!c)return;
+  const opts=[["non_demarre","⚪ Pas démarré"],["en_cours","🎨 En création"],
+    ["bat_envoye","📤 BAT envoyé"],["en_revision","🔄 Révisions"],
+    ["bat_approuve","✅ BAT approuvé"],["en_impression","🖨️ En impression"]];
+  modal(`<h2>Changer le statut BAT</h2>
+  <div style="font-size:13px;font-weight:600;margin-bottom:12px">${esc(c.titre||"")}</div>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    ${opts.map(([v,l])=>`
+    <button onclick="setBat('${cmdId}','${v}')" style="padding:10px 16px;border-radius:8px;border:2px solid ${(c.statutBat||c.statut_bat||"non_demarre")===v?"var(--cyan)":"var(--ligne)"};background:${(c.statutBat||c.statut_bat||"non_demarre")===v?"var(--cyan)18":"var(--carte)"};text-align:left;cursor:pointer;font-size:13px;font-weight:${(c.statutBat||c.statut_bat||"non_demarre")===v?"700":"400"}">
+      ${l}
+    </button>`).join("")}
+  </div>
+  <div class="modal-actions"><button class="btn" onclick="closeOverlays()">Annuler</button></div>`);
+}
+
+function setBat(cmdId, newStat){
+  const c=DB.commandes.find(x=>x.id===cmdId); if(!c)return;
+  c.statutBat=newStat; c.statut_bat=newStat;
+  sync("commandes",c);
+  toast(`✅ BAT mis à jour : ${BAT_LABELS[newStat]||newStat}`);
+  closeOverlays();
+  go("infographistes");
 }
