@@ -1785,101 +1785,6 @@ function saveCmd(id){
 function delCmd(id){if(!guard("commandes"))return;confirmModal("Supprimer cette commande ?","",()=>{DB.commandes=DB.commandes.filter(x=>x.id!==id);syncDel("commandes",id);closeOverlays();toast("Commande supprimée");refreshBadges();go("commandes")})}
 
 /* ============================================================
-   COMPTABILITÉ & TVA
-   ============================================================ */
-function viewCompta(){
-  if(!vis("compta"))return;
-  $("#pg-actions").innerHTML=`<button class="btn" onclick="exportExcel('depenses')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editDepense()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouvelle dépense</button>`;
-  const now=new Date(),m=now.getMonth(),y=now.getFullYear();
-  let tvaColl=0,tvaDed=0,recettes=0,depTTC=0,depHT=0;
-  DB.factures.forEach(f=>{const paid=factPaid(f);if(paid>0&&f.montantTTC){tvaColl+=f.montantTVA*(paid/f.montantTTC);recettes+=paid}});
-  DB.depenses.forEach(d=>{tvaDed+=d.tva||0;depTTC+=d.ttc||0;depHT+=d.ht||0});
-  const tvaReverse=tvaColl-tvaDed;const resultat=recettes-depTTC;
-  const modes={};
-  DB.factures.forEach(f=>(f.paiements||[]).forEach(p=>{modes[p.mode]=(modes[p.mode]||0)+(+p.montant||0)}));
-  const cats={};DB.depenses.forEach(d=>{cats[d.categorie||"Autre"]=(cats[d.categorie||"Autre"]||0)+(+d.ttc||0)});
-  $("#view").innerHTML=`<div class="grid kpis" style="margin-bottom:16px">
-    <div class="card kpi c-cyan"><div class="lab">Recettes encaissées</div><div class="val tabnum">${fcfa(recettes)}</div></div>
-    <div class="card kpi c-mag"><div class="lab">Dépenses TTC</div><div class="val tabnum">${fcfa(depTTC)}</div></div>
-    <div class="card kpi ${tvaReverse>=0?"c-jaune":"c-noir"}"><div class="lab">TVA à reverser</div><div class="val tabnum">${fcfa(tvaReverse)}</div><div class="delta">Collectée ${fcfa(Math.round(tvaColl))} − Déductible ${fcfa(Math.round(tvaDed))}</div></div>
-    <div class="card kpi ${resultat>=0?"c-cyan":"c-mag"}"><div class="lab">Résultat (recettes − dép.)</div><div class="val tabnum">${fcfa(resultat)}</div></div>
-  </div>
-  <div class="two" style="margin-bottom:16px">
-    <div class="card panel"><div class="panel-h"><h3>Recettes par mode</h3></div>${Object.entries(modes).map(([k,v])=>kv(k,fcfa(v))).join("")||"<div class='muted'>Aucun paiement enregistré.</div>"}</div>
-    <div class="card panel"><div class="panel-h"><h3>Dépenses par catégorie</h3></div>${Object.entries(cats).map(([k,v])=>kv(k,fcfa(v))).join("")||"<div class='muted'>Aucune dépense.</div>"}</div>
-  </div>
-  <div class="card panel"><div class="panel-h"><h3>Journal des dépenses</h3></div>
-    ${!DB.depenses.length?"<div class='muted'>Aucune dépense enregistrée.</div>":`<div style="overflow-x:auto"><table><thead><tr><th>Date</th><th>Libellé</th><th>Catégorie</th><th>Fournisseur</th><th class="r">HT</th><th class="r">TVA</th><th class="r">TTC</th><th></th></tr></thead><tbody>
-    ${DB.depenses.map(d=>`<tr><td class="meta">${fdate(d.date)}</td><td class="nm">${esc(d.libelle)}</td><td><span class="seg">${esc(d.categorie||"—")}</span></td><td class="meta">${esc(d.fournisseur||"—")}</td><td class="r tabnum">${fcfa(d.ht)}</td><td class="r tabnum">${fcfa(d.tva)}</td><td class="r tabnum">${fcfa(d.ttc)}</td>
-    <td class="r"><button class="btn btn-sm btn-ghost act-edit" onclick="editDepense('${d.id}')">Modifier</button></td></tr>`).join("")}</tbody></table></div>`}
-  </div>`;
-}
-function editDepense(id){
-  if(!guard("compta"))return;
-  const d=id?DB.depenses.find(x=>x.id===id):{date:todayISO(),libelle:"",categorie:"",fournisseur:"",ht:0,tva:0,ttc:0};
-  const cats=["Achats matières","Charges fixes","Services externes","Frais de déplacement","Marketing","Autre"];
-  drawer(id?"Modifier la dépense":"Nouvelle dépense","",
-    `<form id="f-dep"><div class="row2">
-      <div class="field"><label>Libellé *</label><input name="libelle" value="${esc(d.libelle)}" required></div>
-      <div class="field"><label>Date</label><input name="date" type="date" value="${d.date||todayISO()}"></div>
-    </div><div class="row2">
-      <div class="field"><label>Catégorie</label><select name="categorie">${cats.map(c=>`<option ${d.categorie===c?"selected":""}>${c}</option>`).join("")}</select></div>
-      <div class="field"><label>Fournisseur</label><input name="fournisseur" value="${esc(d.fournisseur||"")}"></div>
-    </div><div class="row2">
-      <div class="field"><label>Montant HT (F)</label><input name="ht" type="number" value="${d.ht||0}" min="0" onchange="autoTTC()"></div>
-      <div class="field"><label>TVA (F)</label><input name="tva" type="number" value="${d.tva||0}" min="0" onchange="autoTTC()"></div>
-    </div><div class="field"><label>Total TTC (F)</label><input name="ttc" id="dep-ttc" type="number" value="${d.ttc||0}" min="0"></div>
-    </form>`,
-    [id?{label:"Supprimer",cls:"btn-danger",fn:`delDepense('${id}')`}:null,{label:id?"Enregistrer":"Ajouter",cls:"btn-primary",fn:`saveDepense('${id||""}')`}].filter(Boolean)
-  );
-}
-function autoTTC(){const ht=+($("[name=ht]")||{}).value||0;const tv=+($("[name=tva]")||{}).value||0;const el=$("#dep-ttc");if(el)el.value=ht+tv}
-function saveDepense(id){
-  if(!guard("compta"))return;
-  const f=$("#f-dep");const fd=new FormData(f);
-  if(!fd.get("libelle").trim()){toast("Libellé obligatoire");return}
-  const dep={id:id||uid(),date:fd.get("date"),libelle:fd.get("libelle"),categorie:fd.get("categorie"),fournisseur:fd.get("fournisseur"),ht:+fd.get("ht")||0,tva:+fd.get("tva")||0,ttc:+fd.get("ttc")||0,createdAt:id?(DB.depenses.find(x=>x.id===id)||{}).createdAt||Date.now():Date.now()};
-  if(id)DB.depenses=DB.depenses.map(x=>x.id===id?dep:x); else DB.depenses.push(dep);
-  sync("depenses",dep);closeOverlays();toast(id?"Dépense mise à jour":"Dépense ajoutée");go(current);
-}
-function delDepense(id){if(!guard("compta"))return;confirmModal("Supprimer cette dépense ?","",()=>{DB.depenses=DB.depenses.filter(x=>x.id!==id);syncDel("depenses",id);closeOverlays();toast("Dépense supprimée");go("compta")})}
-
-/* ============================================================
-   CATALOGUE
-   ============================================================ */
-function viewCatalogue(){
-  if(!vis("catalogue"))return;
-  $("#pg-actions").innerHTML=`<button class="btn" onclick="exportExcel('catalogue')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editProduct()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouveau produit</button>`;
-  if(!DB.products.length){$("#view").innerHTML=emptyState("Catalogue vide","Ajoutez vos produits et tarifs.","Nouveau produit","editProduct()");return}
-  const cats=[...new Set(DB.products.map(p=>p.categorie||"Autre"))].sort();
-  $("#view").innerHTML=cats.map(cat=>{const prods=DB.products.filter(p=>(p.categorie||"Autre")===cat);return`<div class="card" style="margin-bottom:16px"><div class="panel-h" style="padding:14px 16px 10px"><h3 style="font-size:13px;color:var(--txt-2)">${esc(cat)}</h3></div><div style="overflow-x:auto"><table><thead><tr><th>Désignation</th><th class="r">Prix unitaire</th><th>Unité</th><th></th></tr></thead><tbody>${prods.map(p=>`<tr><td class="nm">${esc(p.designation)}</td><td class="r tabnum">${fcfa(p.pu)}</td><td class="meta">${esc(p.unite)}</td><td class="r"><button class="btn btn-sm btn-ghost act-edit" onclick="editProduct('${p.id}')">Modifier</button></td></tr>`).join("")}</tbody></table></div></div>`}).join("");
-}
-function editProduct(id){
-  if(!guard("catalogue"))return;
-  const p=id?DB.products.find(x=>x.id===id):{designation:"",categorie:"",pu:0,unite:"unité"};
-  const cats=["Impression","Grand format","Gadgets","Fournitures","Création","Autre"];
-  drawer(id?"Modifier le produit":"Nouveau produit","",
-    `<form id="f-prod"><div class="field"><label>Désignation *</label><input name="designation" value="${esc(p.designation)}" required></div>
-    <div class="row2">
-      <div class="field"><label>Catégorie</label><select name="categorie">${cats.map(c=>`<option ${p.categorie===c?"selected":""}>${c}</option>`).join("")}</select></div>
-      <div class="field"><label>Unité</label><input name="unite" value="${esc(p.unite||"unité")}"></div>
-    </div>
-    <div class="field"><label>Prix unitaire (F CFA)</label><input name="pu" type="number" value="${p.pu||0}" min="0"></div>
-    </form>`,
-    [id?{label:"Supprimer",cls:"btn-danger",fn:`delProduct('${id}')`}:null,{label:id?"Enregistrer":"Ajouter",cls:"btn-primary",fn:`saveProduct('${id||""}')`}].filter(Boolean)
-  );
-}
-function saveProduct(id){
-  if(!guard("catalogue"))return;
-  const f=$("#f-prod");const fd=new FormData(f);
-  if(!fd.get("designation").trim()){toast("Désignation obligatoire");return}
-  const p={id:id||uid(),designation:fd.get("designation"),categorie:fd.get("categorie"),pu:+fd.get("pu")||0,unite:fd.get("unite")||"unité",createdAt:id?(DB.products.find(x=>x.id===id)||{}).createdAt||Date.now():Date.now()};
-  if(id)DB.products=DB.products.map(x=>x.id===id?p:x); else DB.products.push(p);
-  sync("products",p);closeOverlays();toast(id?"Produit mis à jour":"Produit ajouté");go(current);
-}
-function delProduct(id){if(!guard("catalogue"))return;confirmModal("Supprimer ce produit ?","",()=>{DB.products=DB.products.filter(x=>x.id!==id);syncDel("products",id);closeOverlays();toast("Produit supprimé");go("catalogue")})}
-
-/* ============================================================
    PARAMÈTRES
    ============================================================ */
 function viewParametres(){
@@ -2738,21 +2643,11 @@ function editDepense(id){
       </select></div>
     </div>
     <div class="row3">
-      <div class="field"><label>Montant HT (F)</label><input name="ht" type="number" value="${d.ht||0}" min="0" oninput="autoTTC()"></div>
-      <div class="field"><label>TVA (F)</label><input name="tva" type="number" value="${d.tva||0}" min="0" oninput="autoTTC()"></div>
+      <div class="field"><label>Montant HT (F)</label><input name="ht" type="number" value="${d.ht||0}" min="0" oninput="calcDep()"></div>
+      <div class="field"><label>TVA (F)</label><input name="tva" type="number" value="${d.tva||0}" min="0" oninput="calcDep()"></div>
       <div class="field"><label>Total TTC (F)</label><input name="ttc" id="dep-ttc" type="number" value="${d.ttc||0}" min="0"></div>
     </div></form>`,
     [id?{label:"Supprimer",cls:"btn-danger",fn:`delDepense('${id}')`}:null,
      {label:id?"Enregistrer":"Ajouter",cls:"btn-primary",fn:`saveDepense('${id||""}')`}].filter(Boolean)
   );
 }
-function saveDepense(id){
-  if(!guard("compta"))return;
-  const f=document.getElementById("f-dep");const fd=new FormData(f);
-  if(!fd.get("libelle").trim()){toast("Libellé obligatoire");return}
-  const dep={id:id||uid(),date:fd.get("date"),libelle:fd.get("libelle"),numeroPiece:fd.get("numeroPiece"),categorie:fd.get("categorie"),fournisseurId:fd.get("fournisseurId")||null,modePaiement:fd.get("modePaiement"),statutPaiement:fd.get("statutPaiement"),echeance:fd.get("echeance")||null,ht:+fd.get("ht")||0,tva:+fd.get("tva")||0,ttc:+fd.get("ttc")||0,createdAt:id?(DB.depenses.find(x=>x.id===id)||{}).createdAt||new Date().toISOString():new Date().toISOString()};
-  if(id)DB.depenses=DB.depenses.map(x=>x.id===id?dep:x); else DB.depenses.push(dep);
-  sync("depenses",dep);closeOverlays();toast(id?"Dépense mise à jour":"Dépense ajoutée");go(current);
-}
-function delDepense(id){if(!guard("compta"))return;confirmModal("Supprimer cette dépense ?","",()=>{DB.depenses=DB.depenses.filter(x=>x.id!==id);syncDel("depenses",id);closeOverlays();toast("Dépense supprimée");go("compta")})}
-
