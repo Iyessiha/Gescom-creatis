@@ -111,7 +111,8 @@ function syncDel(table, id){
    ============================================================ */
 async function loadAll(){
   const [settingsRow, rolesRows, usersRows, clientsRows, productsRows,
-         fournisseursRows, devisRows, facturesRows, commandesRows, depensesRows] = await Promise.all([
+         fournisseursRows, devisRows, facturesRows, commandesRows, depensesRows,
+         employesRows, congesRows] = await Promise.all([
     dbFetchOne("app_settings"),
     dbFetch("crm_roles","created_at"),
     dbFetch("crm_users","created_at"),
@@ -122,6 +123,8 @@ async function loadAll(){
     dbFetch("factures","created_at"),
     dbFetch("commandes","created_at"),
     dbFetch("depenses","created_at"),
+    dbFetch("crm_employes","created_at"),
+    dbFetch("crm_conges","created_at"),
   ]);
 
   // Settings — reconstruire au format attendu par l'app
@@ -159,6 +162,8 @@ async function loadAll(){
   DB.factures  = facturesRows;
   DB.commandes = commandesRows;
   DB.depenses  = depensesRows;
+  DB.employes  = employesRows;
+  DB.conges    = congesRows;
 }
 
 /* ============================================================
@@ -171,8 +176,8 @@ function defaultSettings(){
   return {company:defaultCompany(),tva:18,devise:"F CFA",year:new Date().getFullYear(),seqDevis:1,seqFacture:1,seqCommande:1};
 }
 function defaultRoles(){
-  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","parametres"].forEach(m=>full[m]="edit");
-  const mk=(map)=>{const o={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","parametres"].forEach(m=>o[m]=map[m]||"none");return o};
+  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","depenses","crh","parametres"].forEach(m=>full[m]="edit");
+  const mk=(map)=>{const o={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","depenses","crh","parametres"].forEach(m=>o[m]=map[m]||"none");return o};
   return [
     {id:"administrateur",name:"Administrateur",system:true,color:"noir",perms:full,widgets:["kpi_encaisse","kpi_reste","kpi_devis","kpi_leads","chart_ca","pipe_devis","list_relance","list_echeances"]},
     {id:"commercial",name:"Commercial",color:"cyan",perms:mk({dashboard:"view",clients:"edit",devis:"edit",factures:"edit",commandes:"edit",catalogue:"edit"}),widgets:["kpi_devis","kpi_leads","kpi_encaisse","kpi_prod","pipe_devis","list_relance"]},
@@ -248,7 +253,9 @@ const MODS=[
   {k:"catalogue",label:"Catalogue"},{k:"users",label:"Utilisateurs & rôles"},
   {k:"parametres",label:"Paramètres"},
   {k:"fournisseurs",label:"Fournisseurs"},
-  {k:"fiscalite",label:"Fiscalité"}
+  {k:"fiscalite",label:"Fiscalité"},
+  {k:"depenses",label:"Dépenses"},
+  {k:"crh",label:"RH / Employés"}
 ];
 const WIDGETS=[
   {k:"kpi_encaisse",label:"Encaissé (mois/année)"},{k:"kpi_reste",label:"Reste à encaisser"},
@@ -741,6 +748,378 @@ function viewFiscalite(){
   </div>`;
 }
 /* ============================================================
+   MODULE DÉPENSES
+   ============================================================ */
+const CAT_DEP = ["Fournitures","Loyer","Salaires","Transport","Sous-traitance",
+                  "Équipement","Communication","Frais bancaires","Taxes & impôts","Divers"];
+
+function viewDepenses(){
+  if(!vis("depenses"))return;
+  const dev=DB.settings.devise||"F CFA";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
+  const fmtD=s=>s?new Date(s).toLocaleDateString("fr-FR"):"—";
+
+  const totalHT  = DB.depenses.reduce((s,d)=>s+(+d.ht||0),0);
+  const totalTTC = DB.depenses.reduce((s,d)=>s+(+d.ttc||0),0);
+  const nbImpaye = DB.depenses.filter(d=>d.statut_paiement==="impayee"||d.statut_paiement==="en_attente").length;
+
+  $("#pg-title").textContent="Dépenses";
+  $("#pg-sub").textContent=`${DB.depenses.length} dépense(s) enregistrée(s)`;
+  $("#pg-actions").innerHTML=wr("depenses")?`<button class="btn btn-primary" onclick="openDepense()">+ Nouvelle dépense</button>`:"";
+
+  $("#view").innerHTML=`
+  <div class="grid kpis" style="margin-bottom:16px">
+    <div class="card kpi c-rouge"><span class="tick"></span>
+      <div class="lab">Total dépenses HT</div>
+      <div class="val tabnum">${fmt(totalHT)}</div></div>
+    <div class="card kpi c-mag"><span class="tick"></span>
+      <div class="lab">Total TTC</div>
+      <div class="val tabnum">${fmt(totalTTC)}</div></div>
+    <div class="card kpi c-jaune"><span class="tick"></span>
+      <div class="lab">En attente de paiement</div>
+      <div class="val">${nbImpaye}</div></div>
+    <div class="card kpi c-cyan"><span class="tick"></span>
+      <div class="lab">TVA déductible</div>
+      <div class="val tabnum">${fmt(DB.depenses.reduce((s,d)=>s+(+d.tva||0),0))}</div></div>
+  </div>
+  <div class="card panel">
+    <div class="panel-h"><h3>Toutes les dépenses</h3><div class="spacer"></div>
+      <select id="fil-dep-cat" onchange="renderDepList()" style="width:160px"><option value="">Toutes catégories</option>${CAT_DEP.map(c=>`<option>${c}</option>`).join("")}</select>
+      <select id="fil-dep-st" onchange="renderDepList()" style="width:140px"><option value="">Tous statuts</option><option value="payee">Payée</option><option value="impayee">Impayée</option><option value="en_attente">En attente</option></select>
+    </div>
+    <div id="dep-list"></div>
+  </div>`;
+  renderDepList();
+}
+
+function renderDepList(){
+  const dev=DB.settings.devise||"F CFA";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
+  const fmtD=s=>s?new Date(s).toLocaleDateString("fr-FR"):"—";
+  const cat=document.getElementById("fil-dep-cat")?.value||"";
+  const st =document.getElementById("fil-dep-st")?.value||"";
+  const stPill={payee:`<span class="pill p-green"><span class="dot"></span>Payée</span>`,
+    impayee:`<span class="pill p-red"><span class="dot"></span>Impayée</span>`,
+    en_attente:`<span class="pill p-amber"><span class="dot"></span>En attente</span>`};
+  let rows=DB.depenses.filter(d=>(!cat||d.categorie===cat)&&(!st||d.statut_paiement===st))
+    .sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+  const el=document.getElementById("dep-list");
+  if(!el)return;
+  if(!rows.length){el.innerHTML=`<div class="empty">Aucune dépense</div>`;return;}
+  el.innerHTML=`<table><thead><tr>
+    <th>Date</th><th>N° Pièce</th><th>Libellé</th><th>Catégorie</th><th>Fournisseur</th>
+    <th class="r">HT</th><th class="r">TVA</th><th class="r">TTC</th>
+    <th>Mode</th><th>Statut</th><th>Échéance</th><th></th>
+  </tr></thead><tbody>
+  ${rows.map(d=>`<tr>
+    <td class="meta">${fmtD(d.date)}</td>
+    <td class="meta">${esc(d.numero_piece||"—")}</td>
+    <td><div class="nm">${esc(d.libelle||"")}</div></td>
+    <td><span class="pill p-grey" style="font-size:10px">${esc(d.categorie||"—")}</span></td>
+    <td class="meta">${esc(d.fournisseur||"—")}</td>
+    <td class="r tabnum">${fmt(d.ht)}</td>
+    <td class="r tabnum" style="color:var(--cyan)">${fmt(d.tva)}</td>
+    <td class="r tabnum"><strong>${fmt(d.ttc)}</strong></td>
+    <td class="meta">${esc(d.mode_paiement||"—")}</td>
+    <td>${stPill[d.statut_paiement]||`<span class="pill p-grey">${esc(d.statut_paiement||"—")}</span>`}</td>
+    <td class="meta" style="color:${d.echeance&&new Date(d.echeance)<new Date()?"var(--danger)":"inherit"}">${fmtD(d.echeance)}</td>
+    <td>${wr("depenses")?`<button class="btn btn-sm btn-ghost" onclick="openDepense('${d.id}')">✏️</button> <button class="btn btn-sm btn-ghost" onclick="delDepense('${d.id}')">🗑</button>`:""}
+    </td>
+  </tr>`).join("")}
+  </tbody></table>`;
+}
+
+function openDepense(id){
+  if(!wr("depenses"))return;
+  const d=id?DB.depenses.find(x=>x.id===id)||{}:{};
+  const fournOpts=DB.fournisseurs.map(f=>`<option value="${f.nom||""}" ${d.fournisseur===f.nom?"selected":""}>${esc(f.nom||"")}</option>`).join("");
+  modal(`<h2>${id?"Modifier":"Nouvelle"} dépense</h2>
+  <div class="two">
+    <div class="field"><label>Date *</label><input id="dep-date" type="date" value="${d.date||today()}"></div>
+    <div class="field"><label>N° Pièce</label><input id="dep-piece" value="${esc(d.numero_piece||"")}"></div>
+  </div>
+  <div class="field"><label>Libellé *</label><input id="dep-lib" value="${esc(d.libelle||"")}"></div>
+  <div class="two">
+    <div class="field"><label>Catégorie</label><select id="dep-cat">${CAT_DEP.map(c=>`<option ${d.categorie===c?"selected":""}>${c}</option>`).join("")}</select></div>
+    <div class="field"><label>Fournisseur</label><input id="dep-four" list="four-list" value="${esc(d.fournisseur||"")}"><datalist id="four-list">${fournOpts}</datalist></div>
+  </div>
+  <div class="three">
+    <div class="field"><label>Montant HT *</label><input id="dep-ht" type="number" step="1" value="${d.ht||0}" oninput="calcDep()"></div>
+    <div class="field"><label>TVA (F)</label><input id="dep-tva" type="number" step="1" value="${d.tva||0}" oninput="calcDep()"></div>
+    <div class="field"><label>Total TTC</label><input id="dep-ttc" type="number" step="1" value="${d.ttc||0}" readonly style="background:var(--papier)"></div>
+  </div>
+  <div class="two">
+    <div class="field"><label>Mode de paiement</label>
+      <select id="dep-mode"><option value="virement" ${d.mode_paiement==="virement"?"selected":""}>Virement</option><option value="cheque" ${d.mode_paiement==="cheque"?"selected":""}>Chèque</option><option value="especes" ${d.mode_paiement==="especes"?"selected":""}>Espèces</option><option value="mobile" ${d.mode_paiement==="mobile"?"selected":""}>Mobile Money</option></select>
+    </div>
+    <div class="field"><label>Statut paiement</label>
+      <select id="dep-st"><option value="payee" ${d.statut_paiement==="payee"?"selected":""}>Payée</option><option value="en_attente" ${d.statut_paiement==="en_attente"?"selected":""}>En attente</option><option value="impayee" ${(!d.statut_paiement||d.statut_paiement==="impayee")?"selected":""}>Impayée</option></select>
+    </div>
+  </div>
+  <div class="field"><label>Échéance</label><input id="dep-ech" type="date" value="${d.echeance||""}"></div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="saveDepense('${id||""}')">Enregistrer</button>
+  </div>`);
+  calcDep();
+}
+function calcDep(){
+  const ht=+document.getElementById("dep-ht")?.value||0;
+  const tv=+document.getElementById("dep-tva")?.value||0;
+  const el=document.getElementById("dep-ttc");
+  if(el)el.value=Math.round(ht+tv);
+}
+async function saveDepense(id){
+  const rec={
+    date:          document.getElementById("dep-date").value,
+    libelle:       document.getElementById("dep-lib").value.trim(),
+    categorie:     document.getElementById("dep-cat").value,
+    fournisseur:   document.getElementById("dep-four").value.trim(),
+    ht:            +document.getElementById("dep-ht").value||0,
+    tva:           +document.getElementById("dep-tva").value||0,
+    ttc:           +document.getElementById("dep-ttc").value||0,
+    numero_piece:  document.getElementById("dep-piece").value.trim(),
+    mode_paiement: document.getElementById("dep-mode").value,
+    statut_paiement:document.getElementById("dep-st").value,
+    echeance:      document.getElementById("dep-ech").value||null,
+  };
+  if(!rec.libelle||!rec.date){toast("Libellé et date requis");return;}
+  await sync("depenses",id?{id,...rec}:{...rec,id:uuid()});
+  closeOverlays(); go("depenses");
+}
+async function delDepense(id){
+  if(!confirm("Supprimer cette dépense ?"))return;
+  await del("depenses",id); go("depenses");
+}
+
+/* ============================================================
+   MODULE CRH — Ressources Humaines
+   Employés, contrats, salaires, congés, CNPS
+   ============================================================ */
+function viewCrh(){
+  if(!vis("crh"))return;
+  const dev=DB.settings.devise||"F CFA";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
+
+  const actifs    = DB.employes.filter(e=>e.statut==="actif");
+  const masseSal  = actifs.reduce((s,e)=>s+(+e.salaire_brut||0),0);
+  const cnpsPatr  = masseSal * 0.1825; // 18.25% part patronale
+  const cnpsSal   = masseSal * 0.036;  // 3.6% part salariale
+
+  const stPill={
+    actif:`<span class="pill p-green"><span class="dot"></span>Actif</span>`,
+    conge:`<span class="pill p-amber"><span class="dot"></span>En congé</span>`,
+    inactif:`<span class="pill p-grey"><span class="dot"></span>Inactif</span>`
+  };
+  const ctrPill={
+    CDI:`<span class="pill p-cyan" style="font-size:10px">CDI</span>`,
+    CDD:`<span class="pill p-amber" style="font-size:10px">CDD</span>`,
+    Stage:`<span class="pill p-blue" style="font-size:10px">Stage</span>`,
+    Freelance:`<span class="pill p-mag" style="font-size:10px">Freelance</span>`
+  };
+
+  $("#pg-title").textContent="Ressources Humaines";
+  $("#pg-sub").textContent=`${actifs.length} employé(s) actif(s) — Masse salariale : ${fmt(masseSal)}/mois`;
+  $("#pg-actions").innerHTML=wr("crh")?`<button class="btn btn-primary" onclick="openEmploye()">+ Ajouter employé</button>`:"";
+
+  $("#view").innerHTML=`
+  <div class="grid kpis" style="margin-bottom:16px">
+    <div class="card kpi c-cyan"><span class="tick"></span>
+      <div class="lab">Effectif actif</div>
+      <div class="val">${actifs.length}</div>
+      <div class="delta">${DB.employes.length} au total</div></div>
+    <div class="card kpi c-mag"><span class="tick"></span>
+      <div class="lab">Masse salariale brute</div>
+      <div class="val tabnum">${fmt(masseSal)}/mois</div>
+      <div class="delta">Annuel : ${fmt(masseSal*12)}</div></div>
+    <div class="card kpi c-jaune"><span class="tick"></span>
+      <div class="lab">CNPS patronal (18.25%)</div>
+      <div class="val tabnum">${fmt(cnpsPatr)}/mois</div>
+      <div class="delta">Salarial 3.6% : ${fmt(cnpsSal)}</div></div>
+    <div class="card kpi c-noir"><span class="tick"></span>
+      <div class="lab">Coût total employeur</div>
+      <div class="val tabnum">${fmt(masseSal+cnpsPatr)}/mois</div>
+      <div class="delta">Salaire + charges patronales</div></div>
+  </div>
+
+  <div class="two-13" style="margin-bottom:14px">
+    <div class="card panel">
+      <div class="panel-h"><h3>👥 Équipe</h3><div class="spacer"></div>
+        <select id="fil-emp-dep" onchange="renderEmpList()" style="width:160px"><option value="">Tous départements</option>
+        ${[...new Set(DB.employes.map(e=>e.departement).filter(Boolean))].map(d=>`<option>${d}</option>`).join("")}
+        </select>
+      </div>
+      <div id="emp-list"></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card panel">
+        <div class="panel-h"><h3>📊 Répartition</h3></div>
+        ${["CDI","CDD","Stage","Freelance"].map(t=>{
+          const n=DB.employes.filter(e=>e.type_contrat===t).length;
+          return n?`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--ligne)">
+            ${ctrPill[t]||t} <strong>${n} personne${n>1?"s":""}</strong></div>`:"";
+        }).join("")}
+      </div>
+      <div class="card panel">
+        <div class="panel-h"><h3>🏖️ Congés en cours</h3><div class="spacer"></div>
+          ${wr("crh")?`<button class="btn btn-sm" onclick="openConge()">+ Congé</button>`:""}
+        </div>
+        ${(DB.conges||[]).filter(c=>c.statut!=="refuse"&&new Date(c.date_fin)>=new Date()).slice(0,5)
+          .map(c=>{const e=DB.employes.find(x=>x.id===c.employe_id)||{};
+          return`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--ligne);font-size:12px">
+            <span><strong>${esc(e.nom||"")} ${esc(e.prenom||"")}</strong> — ${esc(c.type_conge||"")}</span>
+            <span class="meta">${new Date(c.date_debut).toLocaleDateString("fr-FR")} → ${new Date(c.date_fin).toLocaleDateString("fr-FR")}</span>
+          </div>`;}).join("") || `<div class="meta" style="padding:8px 0">Aucun congé en cours</div>`}
+      </div>
+      <div class="card panel">
+        <div class="panel-h"><h3>📋 CNPS / Charges sociales</h3></div>
+        <div style="font-size:11px;color:var(--txt-2);line-height:2">
+          <div style="display:flex;justify-content:space-between"><span>Part patronale (18.25%)</span><strong>${fmt(cnpsPatr)}</strong></div>
+          <div style="display:flex;justify-content:space-between"><span>Part salariale (3.6%)</span><strong>${fmt(cnpsSal)}</strong></div>
+          <div style="display:flex;justify-content:space-between;padding-top:5px;border-top:1px solid var(--ligne);"><span>Total charges</span><strong>${fmt(cnpsPatr+cnpsSal)}</strong></div>
+        </div>
+        <div style="margin-top:8px;padding:6px 10px;background:#FFF3CD;border-radius:6px;font-size:10.5px;color:#856404">
+          Taux CNPS CI : Patronal 18.25% — Salarial 3.6% (sur salaire brut)
+        </div>
+      </div>
+    </div>
+  </div>`;
+  renderEmpList();
+}
+
+function renderEmpList(){
+  const dev=DB.settings.devise||"F CFA";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
+  const dep=document.getElementById("fil-emp-dep")?.value||"";
+  const stPill={actif:`<span class="pill p-green"><span class="dot"></span>Actif</span>`,
+    conge:`<span class="pill p-amber"><span class="dot"></span>Congé</span>`,
+    inactif:`<span class="pill p-grey"><span class="dot"></span>Inactif</span>`};
+  const rows=DB.employes.filter(e=>!dep||e.departement===dep)
+    .sort((a,b)=>(a.nom||"").localeCompare(b.nom||""));
+  const el=document.getElementById("emp-list");if(!el)return;
+  if(!rows.length){el.innerHTML=`<div class="empty">Aucun employé enregistré<br><span class="meta">Ajoutez votre équipe via le bouton ci-dessus</span></div>`;return;}
+  el.innerHTML=`<table><thead><tr>
+    <th>Nom & Prénom</th><th>Poste</th><th>Département</th><th>Contrat</th>
+    <th class="r">Salaire brut</th><th>Statut</th><th>CNPS</th><th></th>
+  </tr></thead><tbody>
+  ${rows.map(e=>`<tr>
+    <td><div class="nm">${esc(e.nom||"")} ${esc(e.prenom||"")}</div><div class="meta">${esc(e.email||e.tel||"")}</div></td>
+    <td>${esc(e.poste||"—")}</td>
+    <td class="meta">${esc(e.departement||"—")}</td>
+    <td><span class="pill p-cyan" style="font-size:10px">${esc(e.type_contrat||"CDI")}</span></td>
+    <td class="r tabnum"><strong>${fmt(e.salaire_brut)}</strong></td>
+    <td>${stPill[e.statut]||`<span class="pill p-grey">${esc(e.statut||"")}</span>`}</td>
+    <td class="meta">${esc(e.cnps_number||"—")}</td>
+    <td>${wr("crh")?`<button class="btn btn-sm btn-ghost" onclick="openEmploye('${e.id}')">✏️</button> <button class="btn btn-sm btn-ghost" onclick="delEmploye('${e.id}')">🗑</button>`:""}</td>
+  </tr>`).join("")}
+  </tbody></table>`;
+}
+
+function openEmploye(id){
+  if(!wr("crh"))return;
+  const e=id?DB.employes.find(x=>x.id===id)||{}:{};
+  modal(`<h2>${id?"Modifier":"Ajouter"} un employé</h2>
+  <div class="two">
+    <div class="field"><label>Nom *</label><input id="emp-nom" value="${esc(e.nom||"")}"></div>
+    <div class="field"><label>Prénom *</label><input id="emp-prenom" value="${esc(e.prenom||"")}"></div>
+  </div>
+  <div class="two">
+    <div class="field"><label>Poste / Fonction</label><input id="emp-poste" value="${esc(e.poste||"")}"></div>
+    <div class="field"><label>Département</label>
+      <input id="emp-dep" list="dep-list" value="${esc(e.departement||"")}">
+      <datalist id="dep-list"><option>Direction</option><option>Commercial</option><option>Production</option><option>Comptabilité</option><option>Logistique</option></datalist>
+    </div>
+  </div>
+  <div class="two">
+    <div class="field"><label>Type de contrat</label>
+      <select id="emp-ctr"><option ${(e.type_contrat||"CDI")==="CDI"?"selected":""}>CDI</option><option ${e.type_contrat==="CDD"?"selected":""}>CDD</option><option ${e.type_contrat==="Stage"?"selected":""}>Stage</option><option ${e.type_contrat==="Freelance"?"selected":""}>Freelance</option></select>
+    </div>
+    <div class="field"><label>Date d'embauche</label><input id="emp-date" type="date" value="${e.date_embauche||""}"></div>
+  </div>
+  <div class="two">
+    <div class="field"><label>Salaire brut (F CFA/mois)</label><input id="emp-sal" type="number" step="1000" value="${e.salaire_brut||0}"></div>
+    <div class="field"><label>Statut</label>
+      <select id="emp-st"><option value="actif" ${(e.statut||"actif")==="actif"?"selected":""}>Actif</option><option value="conge" ${e.statut==="conge"?"selected":""}>En congé</option><option value="inactif" ${e.statut==="inactif"?"selected":""}>Inactif</option></select>
+    </div>
+  </div>
+  <div class="two">
+    <div class="field"><label>Email</label><input id="emp-email" type="email" value="${esc(e.email||"")}"></div>
+    <div class="field"><label>Téléphone</label><input id="emp-tel" value="${esc(e.tel||"")}"></div>
+  </div>
+  <div class="two">
+    <div class="field"><label>N° CNPS</label><input id="emp-cnps" value="${esc(e.cnps_number||"")}"></div>
+    <div class="field"><label>RIB / Banque</label><input id="emp-rib" value="${esc(e.rib||"")}"></div>
+  </div>
+  <div class="field"><label>Notes</label><textarea id="emp-notes" rows="2">${esc(e.notes||"")}</textarea></div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="saveEmploye('${id||""}')">Enregistrer</button>
+  </div>`);
+}
+
+async function saveEmploye(id){
+  const rec={
+    nom:e("emp-nom"),prenom:e("emp-prenom"),poste:e("emp-poste"),
+    departement:e("emp-dep"),type_contrat:e("emp-ctr"),
+    date_embauche:document.getElementById("emp-date").value||null,
+    salaire_brut:+document.getElementById("emp-sal").value||0,
+    statut:e("emp-st"),email:e("emp-email"),tel:e("emp-tel"),
+    cnps_number:e("emp-cnps"),rib:e("emp-rib"),
+    notes:document.getElementById("emp-notes")?.value?.trim()||""
+  };
+  function e(id){return document.getElementById(id)?.value?.trim()||"";}
+  if(!rec.nom||!rec.prenom){toast("Nom et prénom requis");return;}
+  await sync("crm_employes",id?{id,...rec}:{...rec,id:uuid()});
+  DB.employes=await dbFetch("crm_employes","created_at");
+  closeOverlays(); go("crh");
+}
+
+async function delEmploye(id){
+  if(!confirm("Supprimer cet employé ?"))return;
+  await del("crm_employes",id);
+  DB.employes=await dbFetch("crm_employes","created_at");
+  go("crh");
+}
+
+function openConge(id){
+  if(!wr("crh"))return;
+  const c=id?DB.conges.find(x=>x.id===id)||{}:{};
+  const empOpts=DB.employes.map(e=>`<option value="${e.id}" ${c.employe_id===e.id?"selected":""}>${esc(e.nom||"")} ${esc(e.prenom||"")}</option>`).join("");
+  modal(`<h2>${id?"Modifier":"Nouveau"} congé / absence</h2>
+  <div class="field"><label>Employé *</label><select id="cg-emp"><option value="">-- Choisir --</option>${empOpts}</select></div>
+  <div class="two">
+    <div class="field"><label>Type</label>
+      <select id="cg-type"><option value="conge_paye" ${(c.type_conge||"conge_paye")==="conge_paye"?"selected":""}>Congé payé</option><option value="maladie" ${c.type_conge==="maladie"?"selected":""}>Maladie</option><option value="sans_solde" ${c.type_conge==="sans_solde"?"selected":""}>Sans solde</option><option value="maternite" ${c.type_conge==="maternite"?"selected":""}>Maternité</option></select>
+    </div>
+    <div class="field"><label>Statut</label>
+      <select id="cg-st"><option value="en_attente" ${(c.statut||"en_attente")==="en_attente"?"selected":""}>En attente</option><option value="approuve" ${c.statut==="approuve"?"selected":""}>Approuvé</option><option value="refuse" ${c.statut==="refuse"?"selected":""}>Refusé</option></select>
+    </div>
+  </div>
+  <div class="two">
+    <div class="field"><label>Début</label><input id="cg-deb" type="date" value="${c.date_debut||today()}"></div>
+    <div class="field"><label>Fin</label><input id="cg-fin" type="date" value="${c.date_fin||today()}"></div>
+  </div>
+  <div class="field"><label>Motif</label><input id="cg-motif" value="${esc(c.motif||"")}"></div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="saveConge('${id||""}')">Enregistrer</button>
+  </div>`);
+}
+
+async function saveConge(id){
+  const emp=document.getElementById("cg-emp").value;
+  if(!emp){toast("Sélectionnez un employé");return;}
+  const rec={employe_id:emp,type_conge:document.getElementById("cg-type").value,
+    statut:document.getElementById("cg-st").value,
+    date_debut:document.getElementById("cg-deb").value,
+    date_fin:document.getElementById("cg-fin").value,
+    motif:document.getElementById("cg-motif")?.value?.trim()||""};
+  await sync("crm_conges",id?{id,...rec}:{...rec,id:uuid()});
+  DB.conges=await dbFetch("crm_conges","created_at");
+  closeOverlays(); go("crh");
+}
+
+/* ============================================================
    ROUTING
    ============================================================ */
 const ROUTES={
@@ -755,6 +1134,8 @@ const ROUTES={
   parametres:{t:"Paramètres",render:viewParametres},
   fournisseurs:{t:"Fournisseurs",render:viewFournisseurs},
   fiscalite:{t:"Fiscalité & Obligations",render:viewFiscalite},
+  depenses:{t:"Dépenses",render:viewDepenses},
+  crh:{t:"Ressources Humaines",render:viewCrh},
 };
 function go(route){
   if(!USER)return;
