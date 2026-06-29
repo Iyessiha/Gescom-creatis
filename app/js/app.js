@@ -25,7 +25,7 @@ const SESSION_KEY = "creatis_session_v2";
 const FIELD_TO_DB = {
   clientId:"client_id", devisId:"devis_id", factureId:"facture_id",
   montantHT:"montant_ht", montantTVA:"montant_tva", montantTTC:"montant_ttc",
-  createdAt:"created_at", roleId:"role_id",
+  createdAt:"created_at", roleId:"role_id", caisseId:"caisse_id",
   seqDevis:"seq_devis", seqFacture:"seq_facture", seqCommande:"seq_commande",
   systemRole:"system_role"
 };
@@ -2099,7 +2099,7 @@ function viewUsers(){
 }
 function usersTable(){
   if(!DB.users.length)return emptyState("Aucun compte","Créez les comptes de votre équipe.","Nouveau compte","editUser()");
-  return`<div class="card"><div style="overflow-x:auto"><table><thead><tr><th>Utilisateur</th><th>Identifiant</th><th>Rôle</th><th>Statut</th><th></th></tr></thead><tbody>${DB.users.map(u=>{const r=roleOf(u);return`<tr><td><div class="nm">${esc(u.name)}</div>${u.id===USER.id?'<div class="meta">vous</div>':''}</td><td class="meta tabnum">${esc(u.login)}</td><td><span class="rdot cc-${(r&&r.color)||"noir"}"></span>${esc(r?r.name:"—")}</td><td>${u.active===false?'<span class="pill p-grey"><span class="dot"></span>Inactif</span>':'<span class="pill p-green"><span class="dot"></span>Actif</span>'}</td><td class="r"><button class="btn btn-sm btn-ghost" onclick="editUser('${u.id}')">Modifier</button></td></tr>`}).join("")}</tbody></table></div></div>`;
+  return`<div class="card"><div style="overflow-x:auto"><table><thead><tr><th>Utilisateur</th><th>Identifiant</th><th>Rôle</th><th>Statut</th><th>Caisse</th><th></th></tr></thead><tbody>${DB.users.map(u=>{const r=roleOf(u);return`<tr><td><div class="nm">${esc(u.name)}</div>${u.id===USER.id?'<div class="meta">vous</div>':''}</td><td class="meta tabnum">${esc(u.login)}</td><td><span class="rdot cc-${(r&&r.color)||"noir"}"></span>${esc(r?r.name:"—")}</td><td>${u.active===false?'<span class="pill p-grey"><span class="dot"></span>Inactif</span>':'<span class="pill p-green"><span class="dot"></span>Actif</span>'}</td><td>${(()=>{const c=(DB.caisses||[]).find(x=>x.id===(u.caisseId||u.caisse_id));return c?`<span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:${c.couleur||"#00AEEF"}20;color:${c.couleur||"#00AEEF"};border:1px solid ${c.couleur||"#00AEEF"}40">${esc(c.nom)}</span>`:"<span class=\"meta\">—</span>";})()}</td><td class="r"><button class="btn btn-sm btn-ghost" onclick="editUser('${u.id}')">Modifier</button></td></tr>`}).join("")}</tbody></table></div></div>`;
 }
 function rolesTable(){
   return`<div class="card"><div style="overflow-x:auto"><table><thead><tr><th>Rôle</th><th>Accès</th><th>Comptes</th><th></th></tr></thead><tbody>${DB.roles.map(r=>{const n=DB.users.filter(u=>(u.roleId||u.role_id)===r.id).length;const mods=MODS.filter(m=>r.perms[m.k]&&r.perms[m.k]!=="none").length;return`<tr><td><span class="rdot cc-${r.color||"noir"}"></span><span class="nm">${esc(r.name)}</span>${r.system?' <span class="seg">système</span>':''}</td><td class="meta">${mods} module(s)</td><td class="tabnum">${n}</td><td class="r"><button class="btn btn-sm btn-ghost" onclick="editRole('${r.id}')">Configurer</button></td></tr>`}).join("")}</tbody></table></div></div>`;
@@ -2111,6 +2111,13 @@ function editUser(id){
     <div class="row2"><div class="field"><label>Identifiant *</label><input name="login" value="${esc(u.login)}" required></div>
     <div class="field"><label>Rôle</label><select name="roleId">${DB.roles.map(r=>`<option value="${r.id}" ${(u.roleId||u.role_id)===r.id?"selected":""}>${esc(r.name)}</option>`).join("")}</select></div></div>
     <div class="field"><label>${id?"Nouveau mot de passe (vide = inchangé)":"Mot de passe *"}</label><input name="pwd" type="password"></div>
+    <div class="field"><label>Caisse assignée</label>
+      <select name="caisseId">
+        <option value="">— Aucune caisse assignée —</option>
+        ${(DB.caisses||[]).filter(c=>c.statut==="active").map(c=>`<option value="${c.id}" ${(u.caisseId||u.caisse_id)===c.id?"selected":""}>${esc(c.nom||"")}</option>`).join("")}
+      </select>
+      <div style="font-size:10.5px;color:var(--txt-2);margin-top:3px">Caisse par défaut lors des mouvements</div>
+    </div>
     <div class="field"><label>Statut</label><select name="active"><option value="1" ${u.active!==false?"selected":""}>Actif</option><option value="0" ${u.active===false?"selected":""}>Inactif</option></select></div>
   </form>`,
   [(id&&u.id!==USER.id)?{label:"Supprimer",cls:"btn-danger",fn:`delUser('${id}')`}:null,{label:id?"Enregistrer":"Créer le compte",cls:"btn-primary",fn:`saveUser('${id||""}')`}].filter(Boolean));
@@ -3122,8 +3129,11 @@ function renderCaisseMvt(){
 
 function openMvtCaisse(id, defaultCaisse, defaultType){
   if(!wr("caisses"))return;
+  // Caisse par défaut : celle passée en param, sinon celle de l'utilisateur connecté
+  const userCaisse = (DB.users||[]).find(u=>u.id===USER?.id)?.caisseId || 
+                     (DB.users||[]).find(u=>u.id===USER?.id)?.caisse_id || defaultCaisse;
   const caisseOpts=(DB.caisses||[]).filter(c=>c.statut==="active")
-    .map(c=>`<option value="${c.id}" ${defaultCaisse===c.id?"selected":""}>${esc(c.nom||"")}</option>`).join("");
+    .map(c=>`<option value="${c.id}" ${(userCaisse||defaultCaisse)===c.id?"selected":""}>${esc(c.nom||"")}</option>`).join("");
   modal(`<h2>Nouveau mouvement</h2>
   <div class="two">
     <div class="field"><label>Date *</label><input id="cmvt-date" type="date" value="${todayISO()}"></div>
