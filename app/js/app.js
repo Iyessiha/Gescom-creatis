@@ -2529,6 +2529,10 @@ function viewCompta(){
 
   $("#pg-actions").innerHTML=`
     <button class="btn btn-primary act-edit" onclick="editDepense()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouvelle dépense</button>
+    <button class="btn" onclick="openBalance()" style="border-color:var(--mag);color:var(--mag)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 7h7l-5.5 4 2 7L12 17l-6.5 3 2-7L2 9h7z"/></svg>
+      Balance comptable
+    </button>
     <button class="btn" onclick="exportExcel('depenses')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button>`;
 
   $("#view").innerHTML=`
@@ -3248,4 +3252,445 @@ async function saveCaisse(id){
   else{(DB.caisses=DB.caisses||[]).push(obj);}
   toast(id?"Caisse modifiée":"Caisse créée");
   closeOverlays(); go("caisses");
+}
+
+/* ============================================================
+   BALANCE COMPTABLE — SYSCOHADA simplifié
+   Comptes de tiers, trésorerie, charges, produits, résultat
+   ============================================================ */
+function openBalance(){
+  const y = new Date().getFullYear();
+  modal(`<h2>📊 Balance comptable</h2>
+  <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:flex-end">
+    <div class="field" style="margin:0">
+      <label style="font-size:11px">Période</label>
+      <select id="bal-periode" onchange="renderBalance()">
+        <option value="year">Exercice ${y}</option>
+        <option value="q1">T1 — Jan/Mar ${y}</option>
+        <option value="q2">T2 — Avr/Jun ${y}</option>
+        <option value="q3">T3 — Jul/Sep ${y}</option>
+        <option value="q4">T4 — Oct/Déc ${y}</option>
+        <option value="custom">Période personnalisée</option>
+      </select>
+    </div>
+    <div id="bal-custom" style="display:none;display:flex;gap:8px">
+      <div class="field" style="margin:0"><label style="font-size:11px">Du</label><input id="bal-from" type="date" value="${y}-01-01" onchange="renderBalance()"></div>
+      <div class="field" style="margin:0"><label style="font-size:11px">Au</label><input id="bal-to" type="date" value="${y}-12-31" onchange="renderBalance()"></div>
+    </div>
+    <button class="btn btn-sm" onclick="printBalance()">🖨️ Imprimer / PDF</button>
+    <button class="btn btn-sm" style="border-color:#1D6F42;color:#1D6F42" onclick="exportBalanceExcel()">📊 Excel</button>
+  </div>
+  <div id="bal-content" style="max-height:70vh;overflow-y:auto"></div>`,
+  null, {wide:true});
+
+  // Afficher/masquer champs custom
+  document.getElementById("bal-periode")?.addEventListener("change", e=>{
+    const div=document.getElementById("bal-custom");
+    if(div) div.style.display=e.target.value==="custom"?"flex":"none";
+  });
+  renderBalance();
+}
+
+function getBalancePeriod(){
+  const p=document.getElementById("bal-periode")?.value||"year";
+  const y=new Date().getFullYear();
+  if(p==="year")  return {from:new Date(y,0,1), to:new Date(y,11,31,23,59,59)};
+  if(p==="q1")    return {from:new Date(y,0,1),  to:new Date(y,2,31,23,59,59)};
+  if(p==="q2")    return {from:new Date(y,3,1),  to:new Date(y,5,30,23,59,59)};
+  if(p==="q3")    return {from:new Date(y,6,1),  to:new Date(y,8,30,23,59,59)};
+  if(p==="q4")    return {from:new Date(y,9,1),  to:new Date(y,11,31,23,59,59)};
+  const from=new Date(document.getElementById("bal-from")?.value||`${y}-01-01`);
+  const to  =new Date(document.getElementById("bal-to")?.value  ||`${y}-12-31`);
+  to.setHours(23,59,59);
+  return {from,to};
+}
+
+function buildBalanceData(from, to){
+  const inPeriod = d => { const dt=new Date(d); return dt>=from && dt<=to; };
+  const dev = DB.settings.devise||"F CFA";
+  const tva = DB.settings.tva||18;
+
+  // ── Classe 4 — Comptes de tiers ─────────────────────────────
+  let clients_deb=0, clients_cred=0, fourn_deb=0, fourn_cred=0;
+  let tva_coll=0, tva_ded=0;
+
+  DB.factures.forEach(f=>{
+    if(!inPeriod(f.date)) return;
+    clients_deb += f.montantTTC||0;       // 411 débit (créance)
+    tva_coll    += f.montantTVA||0;       // 44571 crédit TVA collectée
+  });
+  (DB.factures||[]).forEach(f=>{
+    (f.paiements||[]).forEach(p=>{
+      if(inPeriod(p.date)) clients_cred += +p.montant||0; // 411 crédit (encaissement)
+    });
+  });
+
+  DB.depenses.forEach(d=>{
+    if(!inPeriod(d.date)) return;
+    fourn_cred += d.ttc||0;               // 401 crédit (dette fournisseur)
+    tva_ded    += d.tva||0;               // 44521 débit TVA déductible
+  });
+  // Paiements fournisseurs = dépenses déjà réglées
+  DB.depenses.filter(d=>d.statut_paiement==="payee"&&inPeriod(d.date))
+    .forEach(d=>{ fourn_deb += d.ttc||0; }); // 401 débit (paiement)
+
+  // ── Classe 5 — Trésorerie ───────────────────────────────────
+  const caissesByType={};
+  (DB.caisses||[]).forEach(c=>{
+    const mvts=(DB.caisseMvt||[]).filter(m=>m.caisse_id===c.id);
+    let deb=0, cred=0;
+    mvts.forEach(m=>{
+      if(!inPeriod(m.date)) return;
+      if(m.type_mvt==="entree") deb  += +m.montant||0;
+      else                      cred += +m.montant||0;
+    });
+    caissesByType[c.id]={nom:c.nom,type:c.type_caisse,deb,cred,
+      soldeInit:+c.solde_initial||0};
+  });
+
+  // ── Classe 6 — Charges (dépenses HT par catégorie) ──────────
+  const chargesMap={};
+  const catTo6={
+    "Fournitures":"601","Sous-traitance":"604","Transport":"624",
+    "Loyer":"622","Communication":"626","Frais bancaires":"627",
+    "Équipement":"244","Salaires":"661","Taxes & impôts":"646",
+    "Divers":"658"
+  };
+  DB.depenses.forEach(d=>{
+    if(!inPeriod(d.date)) return;
+    const compte = catTo6[d.categorie]||"658";
+    const libelle = d.categorie||"Divers";
+    if(!chargesMap[compte]) chargesMap[compte]={compte,libelle,deb:0,cred:0};
+    chargesMap[compte].deb += d.ht||0;
+  });
+
+  // ── Classe 7 — Produits ──────────────────────────────────────
+  let produits_cred=0;
+  DB.factures.forEach(f=>{
+    if(inPeriod(f.date)) produits_cred += f.montantHT||0;
+  });
+
+  // ── TVA nette ────────────────────────────────────────────────
+  const tva_nette = tva_coll - tva_ded;
+
+  return {clients_deb,clients_cred,fourn_deb,fourn_cred,
+    tva_coll,tva_ded,tva_nette,
+    caisses:Object.values(caissesByType),
+    charges:Object.values(chargesMap).sort((a,b)=>a.compte.localeCompare(b.compte)),
+    produits_cred,
+    totalCharges:Object.values(chargesMap).reduce((s,c)=>s+c.deb,0),
+  };
+}
+
+function renderBalance(){
+  const {from,to} = getBalancePeriod();
+  const d = buildBalanceData(from,to);
+  const dev = DB.settings.devise||"F CFA";
+  const fmt = n => Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ");
+  const fmtD = dt => dt.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric"});
+  const co = DB.settings.company||{};
+
+  const soldeC = (deb,cred) => deb>=cred ? [{v:deb-cred,d:true},{v:0,d:false}] : [{v:0,d:true},{v:cred-deb,d:false}];
+  const row = (num,lib,deb,cred) => {
+    const [sd,sc]=soldeC(deb,cred);
+    return `<tr>
+      <td class="tabnum" style="font-size:11px;padding:5px 10px;color:var(--txt-2)">${num}</td>
+      <td style="font-size:12px;padding:5px 10px">${lib}</td>
+      <td class="r tabnum" style="font-size:12px;padding:5px 10px">${deb?fmt(deb):""}</td>
+      <td class="r tabnum" style="font-size:12px;padding:5px 10px">${cred?fmt(cred):""}</td>
+      <td class="r tabnum" style="font-size:12px;padding:5px 10px;color:var(--ok)">${sd.v?fmt(sd.v):""}</td>
+      <td class="r tabnum" style="font-size:12px;padding:5px 10px;color:var(--danger)">${sc.v?fmt(sc.v):""}</td>
+    </tr>`;
+  };
+  const section = (title,color) =>
+    `<tr style="background:${color||"#1A1A1C"}"><td colspan="6" style="padding:7px 10px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#fff">${title}</td></tr>`;
+
+  // Totaux
+  let totDeb=0,totCred=0;
+  const addTot=(d,c)=>{totDeb+=d;totCred+=c;};
+
+  // Comptes tiers
+  addTot(d.clients_deb,d.clients_cred);
+  addTot(d.fourn_deb,d.fourn_cred);
+  addTot(d.tva_ded,d.tva_coll);
+  // Caisses
+  d.caisses.forEach(c=>{addTot(c.soldeInit+c.deb,c.cred);});
+  // Charges
+  d.charges.forEach(c=>{addTot(c.deb,c.cred);});
+  // Produits
+  addTot(0,d.produits_cred);
+
+  const resultat = d.produits_cred - d.totalCharges;
+  const el = document.getElementById("bal-content");
+  if(!el) return;
+
+  el.innerHTML = `
+  <div id="balance-print-area">
+    <div style="margin-bottom:12px;padding:10px 14px;background:var(--papier);border-radius:6px;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-weight:700;font-size:13px">${esc(co.name||"CREATIS STUDIO")}</div>
+        <div style="font-size:11px;color:var(--txt-2)">Balance des comptes — Du ${fmtD(from)} au ${fmtD(to)}</div>
+      </div>
+      <div style="font-size:11px;color:var(--txt-2);text-align:right">
+        Régime : ${esc(co.regime||"RSI")} — SYSCOHADA simplifié<br>
+        ${esc(co.cc||"")} · ${esc(co.rc||"")}
+      </div>
+    </div>
+
+    <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;border:1px solid var(--ligne)">
+      <thead>
+        <tr style="background:var(--papier)">
+          <th style="padding:7px 10px;font-size:11px;text-align:left;width:60px;border-bottom:2px solid var(--encre)">N° Cpte</th>
+          <th style="padding:7px 10px;font-size:11px;text-align:left;border-bottom:2px solid var(--encre)">Intitulé</th>
+          <th style="padding:7px 10px;font-size:11px;text-align:right;width:130px;border-bottom:2px solid var(--encre)">Débit</th>
+          <th style="padding:7px 10px;font-size:11px;text-align:right;width:130px;border-bottom:2px solid var(--encre)">Crédit</th>
+          <th style="padding:7px 10px;font-size:11px;text-align:right;width:130px;border-bottom:2px solid var(--encre);color:var(--ok)">Solde D.</th>
+          <th style="padding:7px 10px;font-size:11px;text-align:right;width:130px;border-bottom:2px solid var(--encre);color:var(--danger)">Solde C.</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${section("Classe 4 — Comptes de tiers","#2C3E50")}
+        ${row("411","Clients — Factures émises",d.clients_deb,d.clients_cred)}
+        ${row("401","Fournisseurs — Dépenses",d.fourn_deb,d.fourn_cred)}
+        ${row("44571","TVA collectée (factures)",d.tva_ded,d.tva_coll)}
+
+        ${section("Classe 5 — Trésorerie","#1A5276")}
+        ${d.caisses.map(c=>row("5"+{"especes":"71","banque":"12","mobile_money":"14","cheque":"13"}[c.type]||"71",
+          c.nom, c.soldeInit+c.deb, c.cred)).join("")}
+
+        ${section("Classe 6 — Charges","#922B21")}
+        ${d.charges.length ? d.charges.map(c=>row(c.compte,c.libelle,c.deb,c.cred)).join("") :
+          `<tr><td colspan="6" style="padding:8px 10px;font-size:11px;color:var(--txt-3)">Aucune charge enregistrée</td></tr>`}
+
+        ${section("Classe 7 — Produits","#1E8449")}
+        ${row("701","Ventes de produits / Prestations",0,d.produits_cred)}
+
+        ${section("Résultat","#7D3C98")}
+        ${resultat>=0
+          ? row("120","Résultat bénéficiaire",0,resultat)
+          : row("129","Résultat déficitaire",Math.abs(resultat),0)}
+
+        <!-- Totaux généraux -->
+        <tr style="background:var(--encre);color:#fff">
+          <td colspan="2" style="padding:9px 10px;font-size:12px;font-weight:700">TOTAL GÉNÉRAL</td>
+          <td class="r tabnum" style="padding:9px 10px;font-size:13px;font-weight:700;color:#FFC400">${fmt(totDeb)}</td>
+          <td class="r tabnum" style="padding:9px 10px;font-size:13px;font-weight:700;color:#FFC400">${fmt(totCred)}</td>
+          <td colspan="2" style="padding:9px 10px;text-align:right;font-size:11px;color:rgba(255,255,255,.5)">
+            ${totDeb===totCred?"✅ Balance équilibrée":"⚠️ Écart : "+fmt(Math.abs(totDeb-totCred))}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <!-- Résumé bas de page -->
+    <div style="display:flex;gap:12px;margin-top:14px;flex-wrap:wrap">
+      <div style="flex:1;padding:12px 16px;background:var(--papier);border-radius:8px;min-width:160px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-2);margin-bottom:4px">Chiffre d'affaires HT</div>
+        <div style="font-size:18px;font-weight:700;font-family:monospace">${fmt(d.produits_cred)} ${dev}</div>
+      </div>
+      <div style="flex:1;padding:12px 16px;background:var(--papier);border-radius:8px;min-width:160px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-2);margin-bottom:4px">Total charges</div>
+        <div style="font-size:18px;font-weight:700;font-family:monospace">${fmt(d.totalCharges)} ${dev}</div>
+      </div>
+      <div style="flex:1;padding:12px 16px;background:${resultat>=0?"#EFF9F4":"#FDE8E8"};border-radius:8px;border:1px solid ${resultat>=0?"var(--ok)":"var(--danger)"};min-width:160px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${resultat>=0?"var(--ok)":"var(--danger)"};margin-bottom:4px">Résultat net</div>
+        <div style="font-size:18px;font-weight:700;font-family:monospace;color:${resultat>=0?"var(--ok)":"var(--danger)"}">${resultat>=0?"+":""}${fmt(resultat)} ${dev}</div>
+      </div>
+      <div style="flex:1;padding:12px 16px;background:var(--papier);border-radius:8px;min-width:160px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-2);margin-bottom:4px">TVA nette due</div>
+        <div style="font-size:18px;font-weight:700;font-family:monospace;color:${d.tva_nette>0?"var(--warn)":"var(--ok)"}">${fmt(d.tva_nette)} ${dev}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function printBalance(){
+  const {from,to} = getBalancePeriod();
+  const d = buildBalanceData(from,to);
+  const dev = DB.settings.devise||"F CFA";
+  const co = DB.settings.company||{};
+  const fmt = n => Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ");
+  const fmtD = dt => dt.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric"});
+
+  const soldeC = (deb,cred) => deb>=cred ? [deb-cred,0] : [0,cred-deb];
+  const row = (num,lib,deb,cred) => {
+    const [sd,sc]=soldeC(deb,cred);
+    return `<tr>
+      <td style="padding:5px 10px;font-size:11px;color:#777;border-bottom:1px solid #eee">${num}</td>
+      <td style="padding:5px 10px;font-size:12px;border-bottom:1px solid #eee">${lib}</td>
+      <td style="padding:5px 10px;font-size:12px;text-align:right;font-family:monospace;border-bottom:1px solid #eee">${deb?fmt(deb):""}</td>
+      <td style="padding:5px 10px;font-size:12px;text-align:right;font-family:monospace;border-bottom:1px solid #eee">${cred?fmt(cred):""}</td>
+      <td style="padding:5px 10px;font-size:12px;text-align:right;font-family:monospace;color:#137f4f;border-bottom:1px solid #eee">${sd?fmt(sd):""}</td>
+      <td style="padding:5px 10px;font-size:12px;text-align:right;font-family:monospace;color:#E0444E;border-bottom:1px solid #eee">${sc?fmt(sc):""}</td>
+    </tr>`;
+  };
+  const sec = (t,bg) => `<tr style="background:${bg}"><td colspan="6" style="padding:7px 10px;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#fff">${t}</td></tr>`;
+
+  let totD=0,totC=0;
+  const at=(a,b)=>{totD+=a;totC+=b;};
+  at(d.clients_deb,d.clients_cred); at(d.fourn_deb,d.fourn_cred); at(d.tva_ded,d.tva_coll);
+  d.caisses.forEach(c=>at(c.soldeInit+c.deb,c.cred));
+  d.charges.forEach(c=>at(c.deb,c.cred));
+  at(0,d.produits_cred);
+  const res=d.produits_cred-d.totalCharges;
+
+  const html=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+<title>Balance comptable — ${esc(co.name||"Creatis Studio")}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Inter',Arial,sans-serif;color:#1A1A1C;background:#e8e8e8;padding:20px}
+  .page{width:794px;background:#fff;margin:0 auto;padding:0;box-shadow:0 4px 20px rgba(0,0,0,.12)}
+  table{width:100%;border-collapse:collapse}
+  @media print{body{background:#fff;padding:0}.page{box-shadow:none}.no-print{display:none}@page{margin:8mm;size:A4}}
+</style></head><body>
+<div class="page">
+  <div style="height:5px;display:flex">
+    <div style="flex:1;background:#00AEEF"></div><div style="flex:1;background:#EC008C"></div>
+    <div style="flex:1;background:#FFC400"></div><div style="flex:1;background:#1A1A1C"></div>
+  </div>
+  <div style="padding:24px 28px 0">
+
+    <!-- En-tête -->
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid #1A1A1C">
+      <div>
+        <div style="font-size:20px;font-weight:800;letter-spacing:.02em">${esc(co.name||"CREATIS STUDIO")}</div>
+        <div style="font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:#8A8E97;margin-top:2px">${esc(co.activite||"")}</div>
+        <div style="font-size:10px;color:#777;margin-top:5px">RC ${esc(co.rc||"")} · CC ${esc(co.cc||"")} · ${esc(co.regime||"RSI")}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:22px;font-weight:800;color:#1A1A1C">BALANCE COMPTABLE</div>
+        <div style="font-size:12px;font-weight:600;color:#EC008C;margin-top:2px">Du ${fmtD(from)} au ${fmtD(to)}</div>
+        <div style="font-size:10px;color:#8A8E97;margin-top:4px">SYSCOHADA · Régime Réel Simplifié</div>
+      </div>
+    </div>
+
+    <!-- Tableau balance -->
+    <table>
+      <thead>
+        <tr style="background:#1A1A1C;color:#fff">
+          <th style="padding:8px 10px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;text-align:left;width:60px">N° Cpte</th>
+          <th style="padding:8px 10px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;text-align:left">Intitulé du compte</th>
+          <th style="padding:8px 10px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;text-align:right;width:115px">Débit</th>
+          <th style="padding:8px 10px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;text-align:right;width:115px">Crédit</th>
+          <th style="padding:8px 10px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;text-align:right;width:115px;color:#9AEFC6">Solde D.</th>
+          <th style="padding:8px 10px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;text-align:right;width:115px;color:#FFAAAA">Solde C.</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${sec("Classe 4 — Comptes de tiers","#2C3E50")}
+        ${row("411","Clients — Créances sur ventes",d.clients_deb,d.clients_cred)}
+        ${row("401","Fournisseurs — Dettes sur achats",d.fourn_deb,d.fourn_cred)}
+        ${row("44571","TVA collectée / TVA déductible",d.tva_ded,d.tva_coll)}
+        ${sec("Classe 5 — Trésorerie","#1A5276")}
+        ${d.caisses.map(c=>row("5"+{"especes":"71","banque":"12","mobile_money":"14","cheque":"13"}[c.type]||"71",c.nom,c.soldeInit+c.deb,c.cred)).join("")}
+        ${sec("Classe 6 — Charges","#922B21")}
+        ${d.charges.length?d.charges.map(c=>row(c.compte,c.libelle,c.deb,c.cred)).join(""):"<tr><td colspan='6' style='padding:8px;color:#aaa;font-size:11px'>Aucune charge</td></tr>"}
+        ${sec("Classe 7 — Produits","#1E8449")}
+        ${row("701","Ventes de produits et prestations",0,d.produits_cred)}
+        ${sec("Résultat de l'exercice","#7D3C98")}
+        ${res>=0?row("120","Résultat bénéficiaire",0,res):row("129","Résultat déficitaire (perte)",Math.abs(res),0)}
+        <tr style="background:#1A1A1C">
+          <td colspan="2" style="padding:10px;font-size:12px;font-weight:700;color:#fff">TOTAL GÉNÉRAL</td>
+          <td style="padding:10px;font-size:14px;font-weight:700;color:#FFC400;text-align:right;font-family:monospace">${fmt(totD)}</td>
+          <td style="padding:10px;font-size:14px;font-weight:700;color:#FFC400;text-align:right;font-family:monospace">${fmt(totC)}</td>
+          <td colspan="2" style="padding:10px;text-align:right;font-size:11px;color:rgba(255,255,255,.5)">
+            ${totD===totC?"✅ Équilibrée":"⚠️ Écart : "+fmt(Math.abs(totD-totC))+" "+dev}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- Résumé -->
+    <div style="display:flex;gap:10px;margin-top:16px">
+      ${[["Chiffre d'affaires HT",fmt(d.produits_cred)+" "+dev,"#E8F4FD","#0a6fa0"],
+         ["Total charges",fmt(d.totalCharges)+" "+dev,"#FDF2F8","#922B21"],
+         ["Résultat net",fmt(res)+" "+dev,res>=0?"#EFF9F4":"#FDE8E8",res>=0?"#137f4f":"#E0444E"],
+         ["TVA nette due",fmt(d.tva_nette)+" "+dev,"#FFF3CD","#856404"]
+        ].map(([l,v,bg,c])=>`
+        <div style="flex:1;padding:12px 14px;background:${bg};border-radius:8px">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:${c};margin-bottom:4px">${l}</div>
+          <div style="font-size:15px;font-weight:700;font-family:monospace;color:${c}">${v}</div>
+        </div>`).join("")}
+    </div>
+
+    <!-- Signature -->
+    <div style="display:flex;justify-content:space-between;margin-top:28px;margin-bottom:8px">
+      <div style="text-align:center;width:200px;font-size:10px;color:#aaa">
+        <div style="border-top:1px solid #ccc;margin-top:48px;padding-top:5px">Établi par le comptable</div>
+      </div>
+      <div style="text-align:center;width:200px;font-size:10px;color:#aaa">
+        <div style="border-top:1px solid #ccc;margin-top:48px;padding-top:5px">Approuvé par la Direction</div>
+      </div>
+    </div>
+  </div>
+  <div style="margin:12px 28px;padding-top:10px;border-top:1px solid #eee;font-size:8.5px;color:#aaa;text-align:center">
+    ${esc(co.name||"CREATIS STUDIO")} · ${esc(co.siege||"")} · RC ${esc(co.rc||"")} · CC ${esc(co.cc||"")} · Document généré le ${new Date().toLocaleDateString("fr-FR")}
+  </div>
+  <div style="height:4px;display:flex">
+    <div style="flex:1;background:#00AEEF"></div><div style="flex:1;background:#EC008C"></div>
+    <div style="flex:1;background:#FFC400"></div><div style="flex:1;background:#1A1A1C"></div>
+  </div>
+</div>
+<div class="no-print" style="text-align:center;padding:20px;display:flex;justify-content:center;gap:10px">
+  <button onclick="window.print()" style="padding:12px 32px;background:#1A1A1C;color:#fff;border:none;border-radius:30px;font-size:14px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button>
+  <button onclick="window.close()" style="padding:12px 20px;background:#fff;color:#1A1A1C;border:1.5px solid #ddd;border-radius:30px;font-size:14px;cursor:pointer">✕ Fermer</button>
+</div>
+</body></html>`;
+  const w=window.open("","_blank","width=900,height=740");
+  w.document.write(html); w.document.close();
+}
+
+function exportBalanceExcel(){
+  const {from,to} = getBalancePeriod();
+  const d = buildBalanceData(from,to);
+  const dev = DB.settings.devise||"F CFA";
+  const co = DB.settings.company||{};
+  const fmt = n => Math.round(n||0);
+  const fmtD = dt => dt.toLocaleDateString("fr-FR");
+
+  if(typeof XLSX==="undefined"){toast("Chargez d'abord le module Excel");return;}
+  const wb=XLSX.utils.book_new();
+  const rows=[
+    [`Balance comptable — ${co.name||"CREATIS STUDIO"}`,null,null,null,null,null],
+    [`Du ${fmtD(from)} au ${fmtD(to)} · SYSCOHADA · ${co.regime||"RSI"}`,null,null,null,null,null],
+    [],
+    ["N° Compte","Intitulé","Débit","Crédit","Solde Débiteur","Solde Créditeur"],
+    ["— CLASSE 4 — COMPTES DE TIERS",null,null,null,null,null],
+    ["411","Clients — Créances",fmt(d.clients_deb),fmt(d.clients_cred),
+      d.clients_deb>=d.clients_cred?fmt(d.clients_deb-d.clients_cred):0,
+      d.clients_cred>d.clients_deb?fmt(d.clients_cred-d.clients_deb):0],
+    ["401","Fournisseurs — Dettes",fmt(d.fourn_deb),fmt(d.fourn_cred),
+      d.fourn_deb>=d.fourn_cred?fmt(d.fourn_deb-d.fourn_cred):0,
+      d.fourn_cred>d.fourn_deb?fmt(d.fourn_cred-d.fourn_deb):0],
+    ["44571","TVA collectée / déductible",fmt(d.tva_ded),fmt(d.tva_coll),
+      d.tva_ded>=d.tva_coll?fmt(d.tva_ded-d.tva_coll):0,
+      d.tva_coll>d.tva_ded?fmt(d.tva_coll-d.tva_ded):0],
+    ["— CLASSE 5 — TRÉSORERIE",null,null,null,null,null],
+    ...d.caisses.map(c=>[
+      "5"+{"especes":"71","banque":"12","mobile_money":"14","cheque":"13"}[c.type]||"71",
+      c.nom,fmt(c.soldeInit+c.deb),fmt(c.cred),
+      c.soldeInit+c.deb>=c.cred?fmt(c.soldeInit+c.deb-c.cred):0,
+      c.cred>c.soldeInit+c.deb?fmt(c.cred-c.soldeInit-c.deb):0]),
+    ["— CLASSE 6 — CHARGES",null,null,null,null,null],
+    ...d.charges.map(c=>[c.compte,c.libelle,fmt(c.deb),0,fmt(c.deb),0]),
+    ["— CLASSE 7 — PRODUITS",null,null,null,null,null],
+    ["701","Ventes / Prestations",0,fmt(d.produits_cred),0,fmt(d.produits_cred)],
+    ["— RÉSULTAT",null,null,null,null,null],
+    [d.produits_cred-d.totalCharges>=0?"120":"129",
+      d.produits_cred-d.totalCharges>=0?"Résultat bénéficiaire":"Résultat déficitaire",
+      d.produits_cred-d.totalCharges<0?fmt(Math.abs(d.produits_cred-d.totalCharges)):0,
+      d.produits_cred-d.totalCharges>=0?fmt(d.produits_cred-d.totalCharges):0,
+      d.produits_cred-d.totalCharges<0?fmt(Math.abs(d.produits_cred-d.totalCharges)):0,
+      d.produits_cred-d.totalCharges>=0?fmt(d.produits_cred-d.totalCharges):0],
+    [],
+    ["TOTAL GÉNÉRAL",null,null,null,null,null],
+  ];
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"]=[{wch:12},{wch:40},{wch:18},{wch:18},{wch:18},{wch:18}];
+  XLSX.utils.book_append_sheet(wb,ws,"Balance");
+  XLSX.writeFile(wb,`Balance_${co.name||"CRM"}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  toast("✅ Balance exportée en Excel");
 }
