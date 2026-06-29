@@ -835,7 +835,7 @@ function openDepense(id){
   const fournOpts=DB.fournisseurs.map(f=>`<option value="${f.nom||""}" ${d.fournisseur===f.nom?"selected":""}>${esc(f.nom||"")}</option>`).join("");
   modal(`<h2>${id?"Modifier":"Nouvelle"} dépense</h2>
   <div class="two">
-    <div class="field"><label>Date *</label><input id="dep-date" type="date" value="${d.date||today()}"></div>
+    <div class="field"><label>Date *</label><input id="dep-date" type="date" value="${d.date||todayISO()}"></div>
     <div class="field"><label>N° Pièce</label><input id="dep-piece" value="${esc(d.numero_piece||"")}"></div>
   </div>
   <div class="field"><label>Libellé *</label><input id="dep-lib" value="${esc(d.libelle||"")}"></div>
@@ -884,12 +884,19 @@ async function saveDepense(id){
     echeance:      document.getElementById("dep-ech").value||null,
   };
   if(!rec.libelle||!rec.date){toast("Libellé et date requis");return;}
-  await sync("depenses",id?{id,...rec}:{...rec,id:uuid()});
+  const obj = id ? {id,...rec} : {...rec, id:crypto.randomUUID()};
+  const ok = await dbUpsert("depenses", obj);
+  if(!ok) return;
+  if(id){ const i=DB.depenses.findIndex(x=>x.id===id); if(i>=0) DB.depenses[i]=obj; }
+  else   { DB.depenses.push(obj); }
+  toast(id?"Dépense modifiée":"Dépense ajoutée");
   closeOverlays(); go("depenses");
 }
 async function delDepense(id){
   if(!confirm("Supprimer cette dépense ?"))return;
-  await del("depenses",id); go("depenses");
+  await dbDelete("depenses",id);
+  DB.depenses = DB.depenses.filter(x=>x.id!==id);
+  toast("Dépense supprimée"); go("depenses");
 }
 
 /* ============================================================
@@ -1058,27 +1065,37 @@ function openEmploye(id){
 }
 
 async function saveEmploye(id){
+  const gv = sid => document.getElementById(sid)?.value?.trim()||"";
   const rec={
-    nom:e("emp-nom"),prenom:e("emp-prenom"),poste:e("emp-poste"),
-    departement:e("emp-dep"),type_contrat:e("emp-ctr"),
-    date_embauche:document.getElementById("emp-date").value||null,
-    salaire_brut:+document.getElementById("emp-sal").value||0,
-    statut:e("emp-st"),email:e("emp-email"),tel:e("emp-tel"),
-    cnps_number:e("emp-cnps"),rib:e("emp-rib"),
-    notes:document.getElementById("emp-notes")?.value?.trim()||""
+    nom:           gv("emp-nom"),
+    prenom:        gv("emp-prenom"),
+    poste:         gv("emp-poste"),
+    departement:   gv("emp-dep"),
+    type_contrat:  gv("emp-ctr"),
+    date_embauche: document.getElementById("emp-date").value||null,
+    salaire_brut:  +document.getElementById("emp-sal").value||0,
+    statut:        gv("emp-st"),
+    email:         gv("emp-email"),
+    tel:           gv("emp-tel"),
+    cnps_number:   gv("emp-cnps"),
+    rib:           gv("emp-rib"),
+    notes:         document.getElementById("emp-notes")?.value?.trim()||"",
   };
-  function e(id){return document.getElementById(id)?.value?.trim()||"";}
   if(!rec.nom||!rec.prenom){toast("Nom et prénom requis");return;}
-  await sync("crm_employes",id?{id,...rec}:{...rec,id:uuid()});
-  DB.employes=await dbFetch("crm_employes","created_at");
+  const obj = id ? {id,...rec} : {...rec, id:crypto.randomUUID()};
+  const ok = await dbUpsert("crm_employes", obj);
+  if(!ok) return;
+  if(id){ const i=DB.employes.findIndex(x=>x.id===id); if(i>=0) DB.employes[i]=obj; }
+  else   { DB.employes.push(obj); }
+  toast(id?"Employé modifié":"Employé ajouté");
   closeOverlays(); go("crh");
 }
 
 async function delEmploye(id){
   if(!confirm("Supprimer cet employé ?"))return;
-  await del("crm_employes",id);
-  DB.employes=await dbFetch("crm_employes","created_at");
-  go("crh");
+  await dbDelete("crm_employes",id);
+  DB.employes = DB.employes.filter(x=>x.id!==id);
+  toast("Employé supprimé"); go("crh");
 }
 
 function openConge(id){
@@ -1096,8 +1113,8 @@ function openConge(id){
     </div>
   </div>
   <div class="two">
-    <div class="field"><label>Début</label><input id="cg-deb" type="date" value="${c.date_debut||today()}"></div>
-    <div class="field"><label>Fin</label><input id="cg-fin" type="date" value="${c.date_fin||today()}"></div>
+    <div class="field"><label>Début</label><input id="cg-deb" type="date" value="${c.date_debut||todayISO()}"></div>
+    <div class="field"><label>Fin</label><input id="cg-fin" type="date" value="${c.date_fin||todayISO()}"></div>
   </div>
   <div class="field"><label>Motif</label><input id="cg-motif" value="${esc(c.motif||"")}"></div>
   <div class="modal-actions">
@@ -1114,8 +1131,12 @@ async function saveConge(id){
     date_debut:document.getElementById("cg-deb").value,
     date_fin:document.getElementById("cg-fin").value,
     motif:document.getElementById("cg-motif")?.value?.trim()||""};
-  await sync("crm_conges",id?{id,...rec}:{...rec,id:uuid()});
-  DB.conges=await dbFetch("crm_conges","created_at");
+  const obj = id ? {id,...rec} : {...rec, id:crypto.randomUUID()};
+  const ok = await dbUpsert("crm_conges", obj);
+  if(!ok) return;
+  if(id){ const i=DB.conges.findIndex(x=>x.id===id); if(i>=0) DB.conges[i]=obj; }
+  else   { DB.conges.push(obj); }
+  toast(id?"Congé modifié":"Congé enregistré");
   closeOverlays(); go("crh");
 }
 
