@@ -112,7 +112,8 @@ function syncDel(table, id){
 async function loadAll(){
   const [settingsRow, rolesRows, usersRows, clientsRows, productsRows,
          fournisseursRows, devisRows, facturesRows, commandesRows, depensesRows,
-         employesRows, congesRows] = await Promise.all([
+         employesRows, congesRows,
+         stockMvtRows, caissesRows, caisseMvtRows] = await Promise.all([
     dbFetchOne("app_settings"),
     dbFetch("crm_roles","created_at"),
     dbFetch("crm_users","created_at"),
@@ -125,6 +126,9 @@ async function loadAll(){
     dbFetch("depenses","created_at"),
     dbFetch("crm_employes","created_at"),
     dbFetch("crm_conges","created_at"),
+    dbFetch("crm_stock_mouvements","date"),
+    dbFetch("crm_caisses","created_at"),
+    dbFetch("crm_caisse_mvt","date"),
   ]);
 
   // Settings — reconstruire au format attendu par l'app
@@ -162,8 +166,11 @@ async function loadAll(){
   DB.factures  = facturesRows;
   DB.commandes = commandesRows;
   DB.depenses  = depensesRows;
-  DB.employes  = employesRows;
-  DB.conges    = congesRows;
+  DB.employes    = employesRows;
+  DB.conges      = congesRows;
+  DB.stockMvt    = stockMvtRows;
+  DB.caisses     = caissesRows;
+  DB.caisseMvt   = caisseMvtRows;
 }
 
 /* ============================================================
@@ -176,8 +183,8 @@ function defaultSettings(){
   return {company:defaultCompany(),tva:18,devise:"F CFA",year:new Date().getFullYear(),seqDevis:1,seqFacture:1,seqCommande:1};
 }
 function defaultRoles(){
-  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","depenses","crh","parametres"].forEach(m=>full[m]="edit");
-  const mk=(map)=>{const o={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","depenses","crh","parametres"].forEach(m=>o[m]=map[m]||"none");return o};
+  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","depenses","crh","entrepot","caisses","parametres"].forEach(m=>full[m]="edit");
+  const mk=(map)=>{const o={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","depenses","crh","entrepot","caisses","parametres"].forEach(m=>o[m]=map[m]||"none");return o};
   return [
     {id:"administrateur",name:"Administrateur",system:true,color:"noir",perms:full,widgets:["kpi_encaisse","kpi_reste","kpi_devis","kpi_leads","chart_ca","pipe_devis","list_relance","list_echeances"]},
     {id:"commercial",name:"Commercial",color:"cyan",perms:mk({dashboard:"view",clients:"edit",devis:"edit",factures:"edit",commandes:"edit",catalogue:"edit"}),widgets:["kpi_devis","kpi_leads","kpi_encaisse","kpi_prod","pipe_devis","list_relance"]},
@@ -255,7 +262,9 @@ const MODS=[
   {k:"fournisseurs",label:"Fournisseurs"},
   {k:"fiscalite",label:"Fiscalité"},
   {k:"depenses",label:"Dépenses"},
-  {k:"crh",label:"RH / Employés"}
+  {k:"crh",label:"RH / Employés"},
+  {k:"entrepot",label:"Entrepôt"},
+  {k:"caisses",label:"Caisses"}
 ];
 const WIDGETS=[
   {k:"kpi_encaisse",label:"Encaissé (mois/année)"},{k:"kpi_reste",label:"Reste à encaisser"},
@@ -1157,6 +1166,8 @@ const ROUTES={
   fiscalite:{t:"Fiscalité & Obligations",render:viewFiscalite},
   depenses:{t:"Dépenses",render:viewDepenses},
   crh:{t:"Ressources Humaines",render:viewCrh},
+  entrepot:{t:"Entrepôt & Stock",render:viewEntrepot},
+  caisses:{t:"Caisses & Trésorerie",render:viewCaisses},
 };
 function go(route){
   if(!USER)return;
@@ -2650,4 +2661,581 @@ function editDepense(id){
     [id?{label:"Supprimer",cls:"btn-danger",fn:`delDepense('${id}')`}:null,
      {label:id?"Enregistrer":"Ajouter",cls:"btn-primary",fn:`saveDepense('${id||""}')`}].filter(Boolean)
   );
+}
+
+/* ============================================================
+   ENTREPÔT & STOCK — Mouvements, niveaux, alertes
+   ============================================================ */
+function viewEntrepot(){
+  if(!vis("entrepot"))return;
+  const dev=DB.settings.devise||"F CFA";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
+  const fmtD=s=>s?new Date(s).toLocaleDateString("fr-FR"):"—";
+
+  // KPIs stock
+  const prods = DB.products||[];
+  const enAlerte   = prods.filter(p=>(p.stock_actuel||0)<=(p.stock_minimum||0)&&(p.stock_minimum||0)>0);
+  const valeurStock = prods.reduce((s,p)=>s+(+p.stock_actuel||0)*(+p.prix_achat||+p.pu||0),0);
+  const totalMvt    = (DB.stockMvt||[]).length;
+
+  const mvtPill={
+    entree: `<span class="pill p-green"  style="font-size:10px"><span class="dot"></span>Entrée</span>`,
+    sortie: `<span class="pill p-red"    style="font-size:10px"><span class="dot"></span>Sortie</span>`,
+    ajustement:`<span class="pill p-amber" style="font-size:10px"><span class="dot"></span>Ajustement</span>`,
+    inventaire:`<span class="pill p-cyan"  style="font-size:10px"><span class="dot"></span>Inventaire</span>`,
+  };
+  const motifLabel={achat:"🛒 Achat",vente:"🧾 Vente",perte:"❌ Perte",
+    retour:"↩️ Retour",transfert:"🔄 Transfert",inventaire:"📋 Inventaire",ajustement:"⚙️ Ajustement"};
+
+  $("#pg-title").textContent="Entrepôt & Stock";
+  $("#pg-sub").textContent=`${prods.length} produits — Valeur stock : ${fmt(valeurStock)}`;
+  $("#pg-actions").innerHTML=wr("entrepot")?`
+    <button class="btn btn-primary" onclick="openMvtStock()">+ Mouvement de stock</button>
+    <button class="btn" onclick="openInventaire()">📋 Inventaire</button>`:""
+
+  $("#view").innerHTML=`
+  <div class="grid kpis" style="margin-bottom:16px">
+    <div class="card kpi c-cyan"><span class="tick"></span>
+      <div class="lab">Produits en catalogue</div>
+      <div class="val">${prods.length}</div>
+      <div class="delta">${prods.filter(p=>(p.stock_actuel||0)>0).length} en stock</div></div>
+    <div class="card kpi c-jaune"><span class="tick"></span>
+      <div class="lab">Valeur du stock</div>
+      <div class="val tabnum">${fmt(valeurStock)}</div>
+      <div class="delta">Prix d'achat × quantités</div></div>
+    <div class="card kpi ${enAlerte.length?"c-rouge":"c-noir"}"><span class="tick"></span>
+      <div class="lab">Alertes stock bas</div>
+      <div class="val" style="color:${enAlerte.length?"var(--danger)":"inherit"}">${enAlerte.length}</div>
+      <div class="delta">${enAlerte.length?"Produits sous le minimum":""}</div></div>
+    <div class="card kpi c-mag"><span class="tick"></span>
+      <div class="lab">Mouvements enregistrés</div>
+      <div class="val">${totalMvt}</div>
+      <div class="delta">Entrées, sorties, ajustements</div></div>
+  </div>
+
+  <div class="two-13" style="margin-bottom:14px">
+
+    <!-- Niveaux de stock -->
+    <div class="card panel">
+      <div class="panel-h">
+        <h3>📦 Niveaux de stock</h3><div class="spacer"></div>
+        <select id="fil-stock-cat" onchange="renderStockList()" style="width:160px">
+          <option value="">Toutes catégories</option>
+          ${[...new Set(prods.map(p=>p.categorie).filter(Boolean))].map(c=>`<option>${c}</option>`).join("")}
+        </select>
+        <select id="fil-stock-alerte" onchange="renderStockList()" style="width:140px">
+          <option value="">Tous</option>
+          <option value="alerte">⚠️ Alerte uniquement</option>
+          <option value="ok">✅ OK uniquement</option>
+        </select>
+      </div>
+      <div id="stock-list"></div>
+    </div>
+
+    <!-- Colonne droite -->
+    <div style="display:flex;flex-direction:column;gap:14px">
+
+      <!-- Alertes -->
+      ${enAlerte.length?`
+      <div class="card panel" style="border-left:3px solid var(--danger)">
+        <div class="panel-h"><h3>⚠️ Alertes stock</h3></div>
+        ${enAlerte.slice(0,8).map(p=>`
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--ligne);font-size:12px">
+            <div>
+              <div style="font-weight:600">${esc(p.designation||"")}</div>
+              <div class="meta">${esc(p.reference||p.categorie||"")}</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-weight:700;color:var(--danger)">${p.stock_actuel||0} / min ${p.stock_minimum||0}</div>
+            </div>
+          </div>`).join("")}
+      </div>`:`
+      <div class="card panel">
+        <div class="panel-h"><h3>✅ Stock en ordre</h3></div>
+        <div class="meta" style="padding:8px 0">Aucun produit sous le seuil minimum</div>
+      </div>`}
+
+      <!-- Derniers mouvements -->
+      <div class="card panel">
+        <div class="panel-h"><h3>🔄 Derniers mouvements</h3><div class="spacer"></div>
+          ${wr("entrepot")?`<button class="btn btn-sm" onclick="openMvtStock()">+</button>`:""}
+        </div>
+        ${(DB.stockMvt||[]).length===0?`<div class="empty">Aucun mouvement enregistré</div>`:""}
+        ${(DB.stockMvt||[]).slice().sort((a,b)=>new Date(b.date||0)-new Date(a.date||0))
+          .slice(0,8).map(m=>`
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--ligne)">
+            <div style="display:flex;align-items:center;gap:8px">
+              ${mvtPill[m.type_mvt]||""}
+              <div>
+                <div style="font-size:12px;font-weight:600">${esc(m.produit_nom||"—")}</div>
+                <div class="meta">${fmtD(m.date)} — ${esc(motifLabel[m.motif]||m.motif||"")}</div>
+              </div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:13px;font-weight:700;color:${m.type_mvt==="entree"?"var(--ok)":"var(--danger)"}">
+                ${m.type_mvt==="entree"?"+":"−"}${m.quantite}
+              </div>
+              <div class="meta">→ ${m.stock_apres}</div>
+            </div>
+          </div>`).join("")}
+      </div>
+    </div>
+  </div>
+
+  <!-- Historique complet -->
+  <div class="card panel">
+    <div class="panel-h"><h3>📋 Historique des mouvements</h3><div class="spacer"></div>
+      <select id="fil-mvt-type" onchange="renderMvtList()" style="width:150px">
+        <option value="">Tous types</option>
+        <option value="entree">Entrées</option>
+        <option value="sortie">Sorties</option>
+        <option value="ajustement">Ajustements</option>
+        <option value="inventaire">Inventaires</option>
+      </select>
+    </div>
+    <div id="mvt-list"></div>
+  </div>`;
+
+  renderStockList();
+  renderMvtList();
+}
+
+function renderStockList(){
+  const cat = document.getElementById("fil-stock-cat")?.value||"";
+  const alerte = document.getElementById("fil-stock-alerte")?.value||"";
+  let rows = (DB.products||[]).filter(p=>
+    (!cat||p.categorie===cat)&&
+    (!alerte||(alerte==="alerte"?(p.stock_actuel||0)<=(p.stock_minimum||0)&&(p.stock_minimum||0)>0:
+               (p.stock_actuel||0)>(p.stock_minimum||0)))
+  ).sort((a,b)=>(a.designation||"").localeCompare(b.designation||""));
+  const el=document.getElementById("stock-list"); if(!el)return;
+  if(!rows.length){el.innerHTML=`<div class="empty">Aucun produit</div>`;return;}
+  el.innerHTML=`<table><thead><tr>
+    <th>Réf</th><th>Désignation</th><th>Catégorie</th>
+    <th class="r">Stock actuel</th><th class="r">Min</th><th class="r">P. Achat</th><th>État</th>
+    ${wr("entrepot")?`<th></th>`:""}
+  </tr></thead><tbody>
+  ${rows.map(p=>{
+    const enAl=(p.stock_actuel||0)<=(p.stock_minimum||0)&&(p.stock_minimum||0)>0;
+    return`<tr>
+      <td class="meta">${esc(p.reference||"—")}</td>
+      <td><div class="nm">${esc(p.designation||"")}</div></td>
+      <td class="meta">${esc(p.categorie||"—")}</td>
+      <td class="r tabnum" style="font-weight:700;color:${enAl?"var(--danger)":"var(--ok)"}">${p.stock_actuel||0}</td>
+      <td class="r tabnum meta">${p.stock_minimum||0}</td>
+      <td class="r tabnum meta">${Math.round(p.prix_achat||0).toLocaleString("fr-FR")}</td>
+      <td>${enAl?`<span class="pill p-red" style="font-size:10px">⚠️ Bas</span>`:`<span class="pill p-green" style="font-size:10px">✅ OK</span>`}</td>
+      ${wr("entrepot")?`<td><button class="btn btn-sm btn-ghost" onclick="openMvtStock('${p.id}')">Mvt</button></td>`:""}
+    </tr>`;
+  }).join("")}
+  </tbody></table>`;
+}
+
+function renderMvtList(){
+  const type=document.getElementById("fil-mvt-type")?.value||"";
+  const rows=(DB.stockMvt||[]).filter(m=>!type||m.type_mvt===type)
+    .sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+  const mvtPill={entree:`<span class="pill p-green" style="font-size:10px">Entrée</span>`,
+    sortie:`<span class="pill p-red" style="font-size:10px">Sortie</span>`,
+    ajustement:`<span class="pill p-amber" style="font-size:10px">Ajustement</span>`,
+    inventaire:`<span class="pill p-cyan" style="font-size:10px">Inventaire</span>`};
+  const el=document.getElementById("mvt-list"); if(!el)return;
+  if(!rows.length){el.innerHTML=`<div class="empty">Aucun mouvement</div>`;return;}
+  el.innerHTML=`<table><thead><tr>
+    <th>Date</th><th>Produit</th><th>Type</th><th>Motif</th>
+    <th class="r">Qté</th><th class="r">Avant</th><th class="r">Après</th>
+    <th>Référence</th><th>Note</th>
+  </tr></thead><tbody>
+  ${rows.map(m=>`<tr>
+    <td class="meta">${m.date?new Date(m.date).toLocaleDateString("fr-FR"):"—"}</td>
+    <td><div class="nm">${esc(m.produit_nom||"—")}</div></td>
+    <td>${mvtPill[m.type_mvt]||m.type_mvt}</td>
+    <td class="meta">${esc(m.motif||"—")}</td>
+    <td class="r tabnum" style="font-weight:700;color:${m.type_mvt==="entree"?"var(--ok)":"var(--danger)"}">
+      ${m.type_mvt==="entree"?"+":"−"}${m.quantite}
+    </td>
+    <td class="r tabnum meta">${m.stock_avant||0}</td>
+    <td class="r tabnum meta">${m.stock_apres||0}</td>
+    <td class="meta">${esc(m.reference||"—")}</td>
+    <td class="meta">${esc(m.note||"")}</td>
+  </tr>`).join("")}
+  </tbody></table>`;
+}
+
+function openMvtStock(prodId){
+  if(!wr("entrepot"))return;
+  const prodOpts=(DB.products||[]).map(p=>`<option value="${p.id}" ${prodId===p.id?"selected":""}>${esc(p.reference?"["+p.reference+"] ":"")}${esc(p.designation||"")}</option>`).join("");
+  modal(`<h2>Nouveau mouvement de stock</h2>
+  <div class="two">
+    <div class="field"><label>Date *</label><input id="mvt-date" type="date" value="${todayISO()}"></div>
+    <div class="field"><label>Type *</label>
+      <select id="mvt-type">
+        <option value="entree">📥 Entrée de stock</option>
+        <option value="sortie">📤 Sortie de stock</option>
+        <option value="ajustement">⚙️ Ajustement</option>
+        <option value="inventaire">📋 Inventaire</option>
+      </select>
+    </div>
+  </div>
+  <div class="field"><label>Produit *</label>
+    <select id="mvt-prod" onchange="loadStockActuel()">
+      <option value="">-- Sélectionner un produit --</option>${prodOpts}
+    </select>
+  </div>
+  <div class="two">
+    <div class="field"><label>Quantité *</label><input id="mvt-qte" type="number" min="0" step="1" value="1"></div>
+    <div class="field"><label>Stock actuel</label><input id="mvt-stock-actuel" type="number" readonly style="background:var(--papier)" value="0"></div>
+  </div>
+  <div class="two">
+    <div class="field"><label>Motif</label>
+      <select id="mvt-motif">
+        <option value="achat">Achat fournisseur</option>
+        <option value="vente">Vente client</option>
+        <option value="retour">Retour client</option>
+        <option value="perte">Perte / Casse</option>
+        <option value="transfert">Transfert</option>
+        <option value="ajustement">Ajustement inventaire</option>
+      </select>
+    </div>
+    <div class="field"><label>Référence (facture/cmd)</label><input id="mvt-ref" placeholder="FAC-2026-xxxx"></div>
+  </div>
+  <div class="field"><label>Emplacement</label><input id="mvt-empl" placeholder="ex : Rayon A3, Étagère 2"></div>
+  <div class="field"><label>Note</label><textarea id="mvt-note" rows="2"></textarea></div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="saveMvtStock()">Enregistrer</button>
+  </div>`);
+  if(prodId) loadStockActuel();
+}
+
+function loadStockActuel(){
+  const sel=document.getElementById("mvt-prod");
+  const pid=sel?.value;
+  const p=pid?(DB.products||[]).find(x=>x.id===pid):null;
+  const el=document.getElementById("mvt-stock-actuel");
+  if(el) el.value=p?p.stock_actuel||0:0;
+}
+
+async function saveMvtStock(){
+  const gv=id=>document.getElementById(id)?.value?.trim()||"";
+  const prodId=gv("mvt-prod");
+  if(!prodId){toast("Sélectionnez un produit");return;}
+  const prod=(DB.products||[]).find(p=>p.id===prodId);
+  if(!prod){toast("Produit introuvable");return;}
+  const qte=+document.getElementById("mvt-qte").value||0;
+  if(!qte){toast("Quantité invalide");return;}
+  const typeMvt=gv("mvt-type");
+  const stockAvant=+prod.stock_actuel||0;
+  const stockApres=typeMvt==="entree"?stockAvant+qte:
+                   typeMvt==="sortie"?Math.max(0,stockAvant-qte):
+                   typeMvt==="inventaire"?qte : stockAvant+(qte);
+  const mvt={
+    id:crypto.randomUUID(), date:gv("mvt-date"),
+    produit_id:prodId, produit_nom:prod.designation||"",
+    type_mvt:typeMvt, quantite:qte, stock_avant:stockAvant, stock_apres:stockApres,
+    motif:gv("mvt-motif"), reference:gv("mvt-ref"),
+    emplacement:gv("mvt-empl"), note:document.getElementById("mvt-note")?.value?.trim()||"",
+  };
+  const ok=await dbUpsert("crm_stock_mouvements",mvt);
+  if(!ok)return;
+  // MAJ stock produit
+  const patchOk=await dbUpdate("products",prodId,{stock_actuel:stockApres});
+  if(patchOk){
+    const i=(DB.products||[]).findIndex(p=>p.id===prodId);
+    if(i>=0) DB.products[i].stock_actuel=stockApres;
+  }
+  (DB.stockMvt=DB.stockMvt||[]).push(mvt);
+  toast(`✅ ${typeMvt==="entree"?"Entrée":"Sortie"} enregistrée — Stock : ${stockApres}`);
+  closeOverlays(); go("entrepot");
+}
+
+function openInventaire(){
+  if(!wr("entrepot"))return;
+  modal(`<h2>📋 Saisie d'inventaire</h2>
+  <p style="font-size:12px;color:var(--txt-2);margin-bottom:12px">Corrigez les quantités réelles. Laissez vide pour ne pas modifier.</p>
+  <div style="max-height:400px;overflow-y:auto">
+  <table><thead><tr><th>Produit</th><th>Réf</th><th>Stock actuel</th><th>Qté réelle</th></tr></thead>
+  <tbody id="inv-body"></tbody></table>
+  </div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="saveInventaire()">Valider l'inventaire</button>
+  </div>`);
+  const tbody=document.getElementById("inv-body");
+  if(tbody) tbody.innerHTML=(DB.products||[])
+    .sort((a,b)=>(a.designation||"").localeCompare(b.designation||""))
+    .map(p=>`<tr>
+      <td style="font-size:12px">${esc(p.designation||"")}</td>
+      <td class="meta">${esc(p.reference||"")}</td>
+      <td class="r tabnum" style="font-size:12px">${p.stock_actuel||0}</td>
+      <td><input data-id="${p.id}" data-old="${p.stock_actuel||0}" type="number" min="0" step="1"
+           style="width:80px;padding:4px 8px;font-size:12px" placeholder="${p.stock_actuel||0}"></td>
+    </tr>`).join("");
+}
+
+async function saveInventaire(){
+  const inputs=document.querySelectorAll("#inv-body input[data-id]");
+  let count=0;
+  for(const inp of inputs){
+    if(!inp.value.trim())continue;
+    const newQte=+inp.value;
+    const prodId=inp.dataset.id;
+    const oldQte=+inp.dataset.old||0;
+    if(newQte===oldQte)continue;
+    await dbUpdate("products",prodId,{stock_actuel:newQte});
+    const i=(DB.products||[]).findIndex(p=>p.id===prodId);
+    if(i>=0) DB.products[i].stock_actuel=newQte;
+    const mvt={id:crypto.randomUUID(),date:todayISO(),produit_id:prodId,
+      produit_nom:DB.products[i]?.designation||"",type_mvt:"inventaire",
+      quantite:Math.abs(newQte-oldQte),stock_avant:oldQte,stock_apres:newQte,
+      motif:"inventaire",note:"Inventaire physique"};
+    await dbUpsert("crm_stock_mouvements",mvt);
+    (DB.stockMvt=DB.stockMvt||[]).push(mvt);
+    count++;
+  }
+  toast(`✅ Inventaire : ${count} produit(s) mis à jour`);
+  closeOverlays(); go("entrepot");
+}
+
+/* ============================================================
+   CAISSES & TRÉSORERIE
+   ============================================================ */
+function viewCaisses(){
+  if(!vis("caisses"))return;
+  const dev=DB.settings.devise||"F CFA";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
+  const fmtD=s=>s?new Date(s).toLocaleDateString("fr-FR"):"—";
+
+  const caisses=DB.caisses||[];
+  const caisseMvt=DB.caisseMvt||[];
+
+  // Calculer solde de chaque caisse
+  const soldes={};
+  caisses.forEach(c=>{soldes[c.id]=+c.solde_initial||0;});
+  caisseMvt.forEach(m=>{
+    if(soldes[m.caisse_id]!==undefined)
+      soldes[m.caisse_id]+=(m.type_mvt==="entree"?+m.montant:-+m.montant);
+  });
+  const tresoTotale=Object.values(soldes).reduce((s,v)=>s+v,0);
+
+  const typePill={especes:"💵",banque:"🏦",mobile_money:"📱",cheque:"📝"};
+  const typeLabel={especes:"Espèces",banque:"Banque",mobile_money:"Mobile Money",cheque:"Chèque"};
+
+  $("#pg-title").textContent="Caisses & Trésorerie";
+  $("#pg-sub").textContent=`${caisses.length} compte(s) — Trésorerie totale : ${fmt(tresoTotale)}`;
+  $("#pg-actions").innerHTML=wr("caisses")?`
+    <button class="btn btn-primary" onclick="openMvtCaisse()">+ Mouvement</button>
+    <button class="btn" onclick="openCaisse()">+ Nouvelle caisse</button>`:"";
+
+  $("#view").innerHTML=`
+  <!-- Cartes caisses -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-bottom:16px">
+    ${caisses.map(c=>{
+      const solde=soldes[c.id]||0;
+      const mvts=caisseMvt.filter(m=>m.caisse_id===c.id);
+      const dernierMvt=mvts.sort((a,b)=>new Date(b.date||0)-new Date(a.date||0))[0];
+      return`<div class="card" style="padding:18px;border-left:4px solid ${c.couleur||"var(--cyan)"};cursor:pointer" onclick="filtrerCaisse('${c.id}')">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+          <div>
+            <div style="font-size:11px;font-weight:600;color:var(--txt-2);text-transform:uppercase;letter-spacing:.06em">${typePill[c.type_caisse]||""} ${typeLabel[c.type_caisse]||""}</div>
+            <div style="font-size:15px;font-weight:700;margin-top:2px">${esc(c.nom||"")}</div>
+          </div>
+          <span class="pill ${c.statut==="active"?"p-green":"p-grey"}" style="font-size:10px">
+            <span class="dot"></span>${c.statut==="active"?"Active":"Fermée"}
+          </span>
+        </div>
+        <div style="font-size:22px;font-weight:700;font-family:monospace;color:${solde<0?"var(--danger)":"var(--encre)"};margin-bottom:8px">
+          ${fmt(solde)}
+        </div>
+        <div style="font-size:10.5px;color:var(--txt-3)">
+          ${mvts.length} mouvement(s) · Dernier : ${dernierMvt?fmtD(dernierMvt.date):"—"}
+        </div>
+        ${wr("caisses")?`<div style="margin-top:10px;display:flex;gap:6px">
+          <button class="btn btn-sm" onclick="event.stopPropagation();openMvtCaisse('','${c.id}','entree')">+ Entrée</button>
+          <button class="btn btn-sm" onclick="event.stopPropagation();openMvtCaisse('','${c.id}','sortie')">− Sortie</button>
+        </div>`:""}
+      </div>`;
+    }).join("")}
+  </div>
+
+  <!-- Historique mouvements -->
+  <div class="card panel">
+    <div class="panel-h">
+      <h3 id="hist-titre">📊 Tous les mouvements</h3><div class="spacer"></div>
+      <select id="fil-caisse" onchange="renderCaisseMvt()" style="width:180px">
+        <option value="">Toutes les caisses</option>
+        ${caisses.map(c=>`<option value="${c.id}">${esc(c.nom||"")}</option>`).join("")}
+      </select>
+      <select id="fil-mvt-caisse" onchange="renderCaisseMvt()" style="width:140px">
+        <option value="">Tous</option>
+        <option value="entree">Entrées</option>
+        <option value="sortie">Sorties</option>
+      </select>
+    </div>
+    <div id="caisse-mvt-list"></div>
+  </div>`;
+
+  renderCaisseMvt();
+}
+
+function filtrerCaisse(id){
+  const sel=document.getElementById("fil-caisse");
+  if(sel){sel.value=id; renderCaisseMvt();}
+  const titre=document.getElementById("hist-titre");
+  const c=(DB.caisses||[]).find(x=>x.id===id);
+  if(titre&&c) titre.textContent=`📊 Mouvements — ${c.nom}`;
+  document.getElementById("caisse-mvt-list")?.scrollIntoView({behavior:"smooth"});
+}
+
+function renderCaisseMvt(){
+  const dev=DB.settings.devise||"F CFA";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
+  const caisse=document.getElementById("fil-caisse")?.value||"";
+  const type=document.getElementById("fil-mvt-caisse")?.value||"";
+  const rows=(DB.caisseMvt||[])
+    .filter(m=>(!caisse||m.caisse_id===caisse)&&(!type||m.type_mvt===type))
+    .sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+  const el=document.getElementById("caisse-mvt-list"); if(!el)return;
+  if(!rows.length){el.innerHTML=`<div class="empty">Aucun mouvement</div>`;return;}
+  el.innerHTML=`<table><thead><tr>
+    <th>Date</th><th>Caisse</th><th>Libellé</th><th>Catégorie</th>
+    <th class="r">Montant</th><th class="r">Solde après</th><th>Référence</th>
+    ${wr("caisses")?`<th></th>`:""}
+  </tr></thead><tbody>
+  ${rows.map(m=>{
+    const c=(DB.caisses||[]).find(x=>x.id===m.caisse_id)||{};
+    return`<tr>
+      <td class="meta">${m.date?new Date(m.date).toLocaleDateString("fr-FR"):"—"}</td>
+      <td style="font-size:12px">${esc(c.nom||"—")}</td>
+      <td><div class="nm">${esc(m.libelle||"")}</div></td>
+      <td class="meta">${esc(m.categorie||"—")}</td>
+      <td class="r tabnum" style="font-weight:700;color:${m.type_mvt==="entree"?"var(--ok)":"var(--danger)"}">
+        ${m.type_mvt==="entree"?"+":"−"}${fmt(m.montant)}
+      </td>
+      <td class="r tabnum meta">${fmt(m.solde_apres)}</td>
+      <td class="meta">${esc(m.reference||"—")}</td>
+      ${wr("caisses")?`<td><button class="btn btn-sm btn-ghost" onclick="delMvtCaisse('${m.id}','${m.caisse_id}',${m.type_mvt==="entree"?+m.montant:-+m.montant})">🗑</button></td>`:""}
+    </tr>`;
+  }).join("")}
+  </tbody></table>`;
+}
+
+function openMvtCaisse(id, defaultCaisse, defaultType){
+  if(!wr("caisses"))return;
+  const caisseOpts=(DB.caisses||[]).filter(c=>c.statut==="active")
+    .map(c=>`<option value="${c.id}" ${defaultCaisse===c.id?"selected":""}>${esc(c.nom||"")}</option>`).join("");
+  modal(`<h2>Nouveau mouvement</h2>
+  <div class="two">
+    <div class="field"><label>Date *</label><input id="cmvt-date" type="date" value="${todayISO()}"></div>
+    <div class="field"><label>Type *</label>
+      <select id="cmvt-type">
+        <option value="entree"  ${defaultType==="entree" ?"selected":""}>📥 Entrée (recette)</option>
+        <option value="sortie"  ${defaultType==="sortie" ?"selected":""}>📤 Sortie (dépense)</option>
+      </select>
+    </div>
+  </div>
+  <div class="field"><label>Caisse *</label>
+    <select id="cmvt-caisse"><option value="">-- Sélectionner --</option>${caisseOpts}</select>
+  </div>
+  <div class="field"><label>Libellé *</label><input id="cmvt-lib" placeholder="ex: Paiement facture FAC-2026-001"></div>
+  <div class="two">
+    <div class="field"><label>Montant *</label><input id="cmvt-mt" type="number" min="0" step="1" placeholder="0"></div>
+    <div class="field"><label>Catégorie</label>
+      <input id="cmvt-cat" list="cmvt-cat-list" placeholder="ex: Vente, Salaire, Loyer">
+      <datalist id="cmvt-cat-list">
+        <option>Vente client</option><option>Remboursement</option><option>Salaires</option>
+        <option>Fournisseur</option><option>Loyer</option><option>Charges</option>
+        <option>Impôts & taxes</option><option>Frais bancaires</option><option>Divers</option>
+      </datalist>
+    </div>
+  </div>
+  <div class="field"><label>Référence (facture / dépense)</label><input id="cmvt-ref" placeholder="FAC-2026-xxxx"></div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="saveMvtCaisse()">Enregistrer</button>
+  </div>`);
+}
+
+async function saveMvtCaisse(){
+  const gv=id=>document.getElementById(id)?.value?.trim()||"";
+  const caisseId=gv("cmvt-caisse");
+  if(!caisseId){toast("Sélectionnez une caisse");return;}
+  const montant=+document.getElementById("cmvt-mt").value||0;
+  if(!montant){toast("Montant invalide");return;}
+  const libelle=gv("cmvt-lib");
+  if(!libelle){toast("Libellé requis");return;}
+  const typeMvt=gv("cmvt-type");
+
+  // Calculer solde actuel
+  const c=(DB.caisses||[]).find(x=>x.id===caisseId);
+  let solde=+c?.solde_initial||0;
+  (DB.caisseMvt||[]).filter(m=>m.caisse_id===caisseId)
+    .forEach(m=>{solde+=(m.type_mvt==="entree"?+m.montant:-+m.montant);});
+  const soldeApres=typeMvt==="entree"?solde+montant:solde-montant;
+
+  const mvt={
+    id:crypto.randomUUID(),date:gv("cmvt-date"),caisse_id:caisseId,
+    type_mvt:typeMvt,montant,libelle,categorie:gv("cmvt-cat"),
+    reference:gv("cmvt-ref"),solde_avant:solde,solde_apres:soldeApres,
+  };
+  const ok=await dbUpsert("crm_caisse_mvt",mvt);
+  if(!ok)return;
+  (DB.caisseMvt=DB.caisseMvt||[]).push(mvt);
+  toast(`✅ Mouvement enregistré — Solde : ${Math.round(soldeApres).toLocaleString("fr-FR")} ${DB.settings.devise||"F CFA"}`);
+  closeOverlays(); go("caisses");
+}
+
+async function delMvtCaisse(id, caisseId, impact){
+  if(!confirm("Supprimer ce mouvement ?"))return;
+  await dbDelete("crm_caisse_mvt",id);
+  DB.caisseMvt=(DB.caisseMvt||[]).filter(x=>x.id!==id);
+  toast("Mouvement supprimé");
+  go("caisses");
+}
+
+function openCaisse(id){
+  if(!wr("caisses"))return;
+  const c=id?(DB.caisses||[]).find(x=>x.id===id)||{}:{};
+  modal(`<h2>${id?"Modifier":"Nouvelle"} caisse</h2>
+  <div class="field"><label>Nom *</label><input id="cs-nom" value="${esc(c.nom||"")}"></div>
+  <div class="two">
+    <div class="field"><label>Type</label>
+      <select id="cs-type">
+        <option value="especes"     ${(c.type_caisse||"especes")==="especes"?"selected":""}>💵 Espèces</option>
+        <option value="banque"      ${c.type_caisse==="banque"?"selected":""}>🏦 Banque</option>
+        <option value="mobile_money"${c.type_caisse==="mobile_money"?"selected":""}>📱 Mobile Money</option>
+        <option value="cheque"      ${c.type_caisse==="cheque"?"selected":""}>📝 Chèque</option>
+      </select>
+    </div>
+    <div class="field"><label>Solde initial</label><input id="cs-solde" type="number" step="1" value="${c.solde_initial||0}"></div>
+  </div>
+  <div class="two">
+    <div class="field"><label>Couleur</label><input id="cs-color" type="color" value="${c.couleur||"#00AEEF"}"></div>
+    <div class="field"><label>Statut</label>
+      <select id="cs-st">
+        <option value="active" ${(c.statut||"active")==="active"?"selected":""}>Active</option>
+        <option value="fermee" ${c.statut==="fermee"?"selected":""}>Fermée</option>
+      </select>
+    </div>
+  </div>
+  <div class="field"><label>Description</label><input id="cs-desc" value="${esc(c.description||"")}"></div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="saveCaisse('${id||""}')">Enregistrer</button>
+  </div>`);
+}
+
+async function saveCaisse(id){
+  const gv=sid=>document.getElementById(sid)?.value?.trim()||"";
+  const rec={nom:gv("cs-nom"),type_caisse:gv("cs-type"),
+    solde_initial:+document.getElementById("cs-solde").value||0,
+    couleur:gv("cs-color"),statut:gv("cs-st"),description:gv("cs-desc")};
+  if(!rec.nom){toast("Nom requis");return;}
+  const obj=id?{id,...rec}:{...rec,id:crypto.randomUUID()};
+  const ok=await dbUpsert("crm_caisses",obj);
+  if(!ok)return;
+  if(id){const i=(DB.caisses||[]).findIndex(x=>x.id===id);if(i>=0)DB.caisses[i]=obj;}
+  else{(DB.caisses=DB.caisses||[]).push(obj);}
+  toast(id?"Caisse modifiée":"Caisse créée");
+  closeOverlays(); go("caisses");
 }
