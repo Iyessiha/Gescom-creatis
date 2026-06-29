@@ -171,8 +171,8 @@ function defaultSettings(){
   return {company:defaultCompany(),tva:18,devise:"F CFA",year:new Date().getFullYear(),seqDevis:1,seqFacture:1,seqCommande:1};
 }
 function defaultRoles(){
-  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","parametres"].forEach(m=>full[m]="edit");
-  const mk=(map)=>{const o={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","parametres"].forEach(m=>o[m]=map[m]||"none");return o};
+  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","parametres"].forEach(m=>full[m]="edit");
+  const mk=(map)=>{const o={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","parametres"].forEach(m=>o[m]=map[m]||"none");return o};
   return [
     {id:"administrateur",name:"Administrateur",system:true,color:"noir",perms:full,widgets:["kpi_encaisse","kpi_reste","kpi_devis","kpi_leads","chart_ca","pipe_devis","list_relance","list_echeances"]},
     {id:"commercial",name:"Commercial",color:"cyan",perms:mk({dashboard:"view",clients:"edit",devis:"edit",factures:"edit",commandes:"edit",catalogue:"edit"}),widgets:["kpi_devis","kpi_leads","kpi_encaisse","kpi_prod","pipe_devis","list_relance"]},
@@ -247,7 +247,8 @@ const MODS=[
   {k:"commandes",label:"Commandes & projets"},{k:"compta",label:"Comptabilité & TVA"},
   {k:"catalogue",label:"Catalogue"},{k:"users",label:"Utilisateurs & rôles"},
   {k:"parametres",label:"Paramètres"},
-  {k:"fournisseurs",label:"Fournisseurs"}
+  {k:"fournisseurs",label:"Fournisseurs"},
+  {k:"fiscalite",label:"Fiscalité"}
 ];
 const WIDGETS=[
   {k:"kpi_encaisse",label:"Encaissé (mois/année)"},{k:"kpi_reste",label:"Reste à encaisser"},
@@ -515,6 +516,231 @@ async function testFneConnection(){
 }
 
 /* ============================================================
+   MODULE FISCALITÉ — BIC, IMF, Patente, Acomptes (CGI CI)
+   RSI : BIC 25% / IMF 2% CA TTC / MAX(BIC,IMF)
+   ============================================================ */
+function viewFiscalite(){
+  const co  = DB.settings.company || {};
+  const y   = new Date().getFullYear();
+  const dev = DB.settings.devise || "F CFA";
+  const fmt = n => Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ") + " " + dev;
+
+  // ── Données comptables ──────────────────────────────────────────
+  let caTTC=0, caHT=0, depHT=0, tvaCollectee=0;
+  DB.factures.forEach(f=>{
+    if(new Date(f.date||f.createdAt||0).getFullYear()===y){
+      caTTC += f.montantTTC||0;
+      caHT  += f.montantHT||0;
+      tvaCollectee += f.montantTVA||0;
+    }
+  });
+  DB.depenses.forEach(d=>{
+    if(new Date(d.date||d.createdAt||0).getFullYear()===y){
+      depHT += d.ht||0;
+    }
+  });
+
+  // ── Calcul BIC ──────────────────────────────────────────────────
+  const resultatComptable = caHT - depHT;
+  const bicBrut  = Math.max(0, resultatComptable * 0.25);   // 25% bénéfice net
+  const imfRSI   = Math.max(400000, caTTC * 0.02);          // 2% CA TTC, min 400 000 F
+  const impotDu  = Math.max(bicBrut, imfRSI);
+  const acompte  = Math.round(impotDu / 3);
+  const regime   = co.regime || "Réel Simplifié";
+
+  // ── Patente (barème simplifié sur CA HT) ────────────────────────
+  // Droit sur CA : progressif selon CGI
+  let droitCA = 0;
+  if(caHT <= 5000000)          droitCA = caHT * 0.004;
+  else if(caHT <= 20000000)    droitCA = 20000  + (caHT-5000000)  * 0.005;
+  else if(caHT <= 100000000)   droitCA = 95000  + (caHT-20000000) * 0.006;
+  else if(caHT <= 500000000)   droitCA = 575000 + (caHT-100000000)* 0.007;
+  else                          droitCA = 3375000+ (caHT-500000000)* 0.008;
+  const droitVL  = 18000; // valeur locative estimée (à renseigner manuellement)
+  const patente  = Math.round(droitCA + droitVL);
+
+  // ── Déclarations TVA ──────────────────────────────────────────
+  let tvaQ = Array(4).fill(null).map(()=>({coll:0,ded:0}));
+  DB.factures.forEach(f=>{
+    (f.paiements||[]).forEach(p=>{
+      const d=new Date(p.date); if(d.getFullYear()!==y) return;
+      const qi=Math.floor(d.getMonth()/3);
+      tvaQ[qi].coll += f.montantTVA?f.montantTVA*(+p.montant/(f.montantTTC||1)):0;
+    });
+  });
+  DB.depenses.forEach(d=>{ if(d.date){const dd=new Date(d.date);if(dd.getFullYear()===y){const qi=Math.floor(dd.getMonth()/3);tvaQ[qi].ded+=d.tva||0;}} });
+
+  const now = new Date(), mois = now.getMonth(), qCour = Math.floor(mois/3);
+  const echeances = [
+    {label:"Patente",         date:`31/03/${y}`,  montant:patente,              statut:"fiscale",   note:"Droit CA + Droit VL"},
+    {label:"BIC/IMF — 1ʳᵉ fraction", date:`20/04/${y}`,montant:acompte,        statut:"bic",       note:"1/3 de l'impôt dû"},
+    {label:"TVA — T1",        date:`20/04/${y}`,  montant:Math.max(0,Math.round(tvaQ[0].coll-tvaQ[0].ded)), statut:"tva", note:"Jan–Mar"},
+    {label:"BIC/IMF — 2ᵉ fraction",  date:`20/07/${y}`,montant:acompte,        statut:"bic",       note:"1/3 de l'impôt dû"},
+    {label:"TVA — T2",        date:`20/07/${y}`,  montant:Math.max(0,Math.round(tvaQ[1].coll-tvaQ[1].ded)), statut:"tva", note:"Avr–Jun"},
+    {label:"BIC/IMF — 3ᵉ fraction",  date:`20/09/${y}`,montant:acompte,        statut:"bic",       note:"1/3 de l'impôt dû"},
+    {label:"TVA — T3",        date:`20/10/${y}`,  montant:Math.max(0,Math.round(tvaQ[2].coll-tvaQ[2].ded)), statut:"tva", note:"Jul–Sep"},
+    {label:"Déclaration BIC annuelle",date:`31/05/${y+1}`,montant:impotDu,     statut:"bic",       note:"Solde après acomptes"},
+    {label:"TVA — T4",        date:`20/01/${y+1}`,montant:Math.max(0,Math.round(tvaQ[3].coll-tvaQ[3].ded)), statut:"tva", note:"Oct–Déc"},
+  ].map(e=>({...e, isLate: new Date(e.date.split("/").reverse().join("-")) < now}));
+
+  const stColor = {bic:"var(--cyan)",tva:"var(--mag)",fiscale:"var(--jaune)"};
+  const stLabel = {bic:"BIC/IMF",tva:"TVA",fiscale:"Patente"};
+
+  $("#pg-title").textContent = "Fiscalité & Obligations";
+  $("#pg-sub").textContent   = `${co.name||"Creatis Studio"} — Régime ${regime} — Exercice ${y}`;
+  $("#pg-actions").innerHTML = "";
+
+  $("#view").innerHTML = `
+
+  <!-- KPIs fiscaux -->
+  <div class="grid kpis" style="margin-bottom:16px">
+    <div class="card kpi c-cyan"><span class="tick"></span>
+      <div class="lab">CA TTC ${y}</div>
+      <div class="val tabnum">${fmt(Math.round(caTTC))}</div>
+      <div class="delta">HT : ${fmt(Math.round(caHT))}</div>
+    </div>
+    <div class="card kpi c-mag"><span class="tick"></span>
+      <div class="lab">Résultat comptable</div>
+      <div class="val tabnum" style="color:${resultatComptable>=0?"var(--ok)":"var(--danger)"}">${fmt(Math.round(resultatComptable))}</div>
+      <div class="delta">${resultatComptable>=0?"Bénéfice":"Déficit"} avant impôt</div>
+    </div>
+    <div class="card kpi c-jaune"><span class="tick"></span>
+      <div class="lab">BIC estimé (25%)</div>
+      <div class="val tabnum">${fmt(Math.round(bicBrut))}</div>
+      <div class="delta">IMF (2% CA TTC) : ${fmt(Math.round(imfRSI))}</div>
+    </div>
+    <div class="card kpi c-noir"><span class="tick"></span>
+      <div class="lab">Impôt dû MAX(BIC,IMF)</div>
+      <div class="val tabnum">${fmt(Math.round(impotDu))}</div>
+      <div class="delta">Acompte (1/3) : ${fmt(acompte)}</div>
+    </div>
+  </div>
+
+  <!-- BIC + IMF + Patente -->
+  <div class="two-13" style="margin-bottom:16px">
+    <div class="card panel">
+      <div class="panel-h"><h3>📊 Calcul BIC / IMF — RSI ${y}</h3><div class="spacer"></div><span class="micro">Art. 34 & 90 CGI</span></div>
+
+      <!-- Résultat -->
+      <div style="background:var(--papier);border-radius:var(--r);padding:14px 16px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-2);margin-bottom:10px">Compte de résultat simplifié</div>
+        ${kv("Chiffre d'affaires HT",fmt(Math.round(caHT)))}
+        ${kv("Charges déductibles HT","− "+fmt(Math.round(depHT)))}
+        <div style="display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-top:2px solid var(--encre);margin-top:4px">
+          <span style="font-weight:700">Résultat fiscal</span>
+          <span style="font-weight:700;font-family:monospace;color:${resultatComptable>=0?"var(--ok)":"var(--danger)"}">${fmt(Math.round(resultatComptable))}</span>
+        </div>
+      </div>
+
+      <!-- BIC vs IMF -->
+      <div class="two" style="gap:12px;margin-bottom:14px">
+        <div style="padding:12px 14px;background:${bicBrut>=imfRSI?"#E3F6EC":"var(--papier)"};border-radius:var(--r);border:${bicBrut>=imfRSI?"2px solid var(--ok)":"1px solid var(--ligne)"}">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--txt-2);margin-bottom:6px">BIC — 25% du bénéfice</div>
+          <div style="font-size:20px;font-weight:700;font-family:monospace">${fmt(Math.round(bicBrut))}</div>
+          <div style="font-size:11px;color:var(--txt-2);margin-top:4px">${fmt(Math.round(resultatComptable))} × 25%</div>
+          ${bicBrut>=imfRSI?`<div class="pill p-green" style="margin-top:6px;font-size:10px"><span class="dot"></span>Montant retenu</div>`:""}
+        </div>
+        <div style="padding:12px 14px;background:${imfRSI>bicBrut?"#FEF3E2":"var(--papier)"};border-radius:var(--r);border:${imfRSI>bicBrut?"2px solid var(--warn)":"1px solid var(--ligne)"}">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--txt-2);margin-bottom:6px">IMF — 2% du CA TTC</div>
+          <div style="font-size:20px;font-weight:700;font-family:monospace">${fmt(Math.round(imfRSI))}</div>
+          <div style="font-size:11px;color:var(--txt-2);margin-top:4px">${fmt(Math.round(caTTC))} × 2% (min 400 000 F)</div>
+          ${imfRSI>bicBrut?`<div class="pill p-amber" style="margin-top:6px;font-size:10px"><span class="dot"></span>Montant retenu</div>`:""}
+        </div>
+      </div>
+
+      <!-- Acomptes -->
+      <div style="background:#1A1A1C;border-radius:var(--r);padding:14px 16px;color:#fff">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.5);margin-bottom:10px">Acomptes provisionnels (3 fractions égales)</div>
+        <div style="display:flex;justify-content:space-between;gap:8px">
+          ${[["1ʳᵉ fraction","20/04"],["2ᵉ fraction","20/07"],["3ᵉ fraction","20/09"]].map(([l,d])=>`
+          <div style="flex:1;background:rgba(255,255,255,.07);border-radius:8px;padding:10px;text-align:center">
+            <div style="font-size:9.5px;color:rgba(255,255,255,.5);margin-bottom:4px">${l}</div>
+            <div style="font-family:monospace;font-size:14px;font-weight:700;color:#FFC400">${fmt(acompte)}</div>
+            <div style="font-size:9.5px;color:rgba(255,255,255,.4);margin-top:4px">avant le ${d}/${y}</div>
+          </div>`).join("")}
+        </div>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.1);display:flex;justify-content:space-between;font-size:12px">
+          <span style="color:rgba(255,255,255,.6)">Total impôt dû</span>
+          <span style="font-family:monospace;font-weight:700;color:#FFC400">${fmt(Math.round(impotDu))}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Patente + Infos régime -->
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card panel">
+        <div class="panel-h"><h3>🏢 Patente ${y}</h3><div class="spacer"></div><span class="micro">Art. 261 CGI</span></div>
+        ${kv("Droit sur CA (barème)",fmt(Math.round(droitCA)))}
+        ${kv("Droit valeur locative","estimé "+fmt(droitVL))}
+        <div style="display:flex;justify-content:space-between;gap:16px;padding:8px 0;border-top:2px solid var(--encre);margin-top:4px;font-weight:700">
+          <span>Patente estimée</span><span style="font-family:monospace;color:var(--jaune)">${fmt(patente)}</span>
+        </div>
+        <div style="margin-top:8px;padding:7px 10px;background:#FFF3CD;border-radius:6px;font-size:10.5px;color:#856404">
+          ⚠️ Montant indicatif. La patente définitive est établie par la DGI sur la base du CA de l'année précédente. Échéance : <strong>31 mars ${y}</strong>.
+        </div>
+      </div>
+
+      <div class="card panel">
+        <div class="panel-h"><h3>📋 Régime fiscal</h3></div>
+        ${kv("Régime",co.regime||"Réel Simplifié")}
+        ${kv("Centre des impôts",co.centre||"II Plateaux 2")}
+        ${kv("NCC / CC",co.cc||"0811105V")}
+        ${kv("RCCM",co.rc||"CI-ABJ-2007-B-3172")}
+        ${kv("Taux BIC","25% (personnes morales)")}
+        ${kv("Taux IMF RSI","2% CA TTC (min 400 000 F)")}
+        ${kv("TVA","18% (collectée et déclarée par trimestre)")}
+        <div style="margin-top:10px;padding:7px 10px;background:var(--papier);border-radius:6px;font-size:10.5px;color:var(--txt-2)">
+          RSI applicable entre 200 M et 500 M FCFA de CA TTC.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Calendrier fiscal -->
+  <div class="card panel" style="margin-bottom:16px">
+    <div class="panel-h"><h3>📅 Calendrier fiscal ${y}</h3><div class="spacer"></div><span class="micro">Échéances DGI</span></div>
+    <div style="overflow-x:auto"><table><thead><tr>
+      <th>Obligation</th><th>Échéance</th><th>Type</th><th class="r">Montant estimé</th><th>Statut</th>
+    </tr></thead><tbody>
+    ${echeances.map(e=>`<tr>
+      <td><div class="nm">${e.label}</div><div class="meta">${e.note||""}</div></td>
+      <td class="meta" style="white-space:nowrap;font-weight:${e.isLate?"700":"400"};color:${e.isLate?"var(--danger)":"inherit"}">${e.date}</td>
+      <td><span class="pill" style="background:${stColor[e.statut]||"var(--cyan)"}18;color:${stColor[e.statut]||"var(--cyan)"};font-size:10px;border:1px solid ${stColor[e.statut]||"var(--cyan)"}30"><span class="dot" style="background:${stColor[e.statut]||"var(--cyan)"}"></span>${stLabel[e.statut]||e.statut}</span></td>
+      <td class="r tabnum">${e.montant?fmt(e.montant):"—"}</td>
+      <td>${e.isLate?`<span class="pill p-red" style="font-size:10px"><span class="dot"></span>Passée</span>`:`<span class="pill p-blue" style="font-size:10px"><span class="dot"></span>À venir</span>`}</td>
+    </tr>`).join("")}
+    </tbody></table></div>
+    <div style="margin-top:12px;padding:8px 12px;background:var(--papier);border-radius:6px;font-size:10.5px;color:var(--txt-2)">
+      <strong>Note :</strong> Tous les montants sont des estimations basées sur les données saisies dans le CRM.
+      Consulter un expert-comptable pour les déclarations officielles.
+    </div>
+  </div>
+
+  <!-- TVA par trimestre -->
+  <div class="card panel">
+    <div class="panel-h"><h3>💼 Déclarations TVA — ${y}</h3><div class="spacer"></div><span class="micro">18% — Art. 339 CGI</span></div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+    ${tvaQ.map((q,i)=>{
+      const net=Math.round(q.coll-q.ded);
+      const labels=["T1 — Jan/Mar","T2 — Avr/Jun","T3 — Jul/Sep","T4 — Oct/Déc"];
+      const dates=[`20/04/${y}`,`20/07/${y}`,`20/10/${y}`,`20/01/${y+1}`];
+      const isCur=i===qCour;
+      return`<div style="padding:14px;border-radius:var(--r);border:${isCur?"2px solid var(--cyan)":"1px solid var(--ligne)"};background:${isCur?"rgba(0,174,239,.05)":"var(--carte)"}">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${isCur?"var(--cyan)":"var(--txt-2)"};margin-bottom:8px">${labels[i]} ${isCur?"·  En cours":""}</div>
+        <div style="font-size:10.5px;color:var(--txt-2);line-height:1.9">
+          <div>Collectée : <strong>${fmt(Math.round(q.coll))}</strong></div>
+          <div>Déductible : <strong>${fmt(Math.round(q.ded))}</strong></div>
+        </div>
+        <div style="margin-top:8px;padding:6px 10px;border-radius:6px;text-align:center;background:${net>=0?"#FEF3E2":"#E3F6EC"};font-size:12px;font-weight:700;color:${net>=0?"#856404":"var(--ok)"}">
+          ${net>=0?"À reverser":"Crédit"}<br>${fmt(Math.abs(net))}
+        </div>
+        <div style="font-size:9px;color:var(--txt-3);text-align:center;margin-top:5px">Avant le ${dates[i]}</div>
+      </div>`;
+    }).join("")}
+    </div>
+  </div>`;
+}
+/* ============================================================
    ROUTING
    ============================================================ */
 const ROUTES={
@@ -528,6 +754,7 @@ const ROUTES={
   users:{t:"Utilisateurs & rôles",render:viewUsers},
   parametres:{t:"Paramètres",render:viewParametres},
   fournisseurs:{t:"Fournisseurs",render:viewFournisseurs},
+  fiscalite:{t:"Fiscalité & Obligations",render:viewFiscalite},
 };
 function go(route){
   if(!USER)return;
