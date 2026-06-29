@@ -604,7 +604,16 @@ function viewFiscalite(){
 
   $("#pg-title").textContent = "Fiscalité & Obligations";
   $("#pg-sub").textContent   = `${co.name||"Creatis Studio"} — Régime ${regime} — Exercice ${y}`;
-  $("#pg-actions").innerHTML = "";
+  $("#pg-actions").innerHTML = `
+    <button class="btn btn-primary" onclick="printFiscalite()">
+      🖨️ Imprimer la fiche
+    </button>
+    <button class="btn" style="border-color:#1D6F42;color:#1D6F42" onclick="exportFiscaliteExcel()">
+      📊 Excel
+    </button>
+    <button class="btn" onclick="openAcompte()">
+      💳 Enregistrer un acompte
+    </button>`;
 
   $("#view").innerHTML = `
 
@@ -3693,4 +3702,297 @@ function exportBalanceExcel(){
   XLSX.utils.book_append_sheet(wb,ws,"Balance");
   XLSX.writeFile(wb,`Balance_${co.name||"CRM"}_${new Date().toISOString().slice(0,10)}.xlsx`);
   toast("✅ Balance exportée en Excel");
+}
+
+/* ============================================================
+   FISCALITÉ — Actions : acomptes, impression, export
+   ============================================================ */
+
+// ── Modal enregistrement d'un acompte ───────────────────────────
+function openAcompte(){
+  if(!wr("fiscalite")){toast("Accès non autorisé");return;}
+  const y = new Date().getFullYear();
+  const co = DB.settings.company||{};
+  const tva = DB.settings.tva||18;
+  let caTTC=0, depHT=0;
+  DB.factures.forEach(f=>{if(new Date(f.date||0).getFullYear()===y) caTTC+=f.montantTTC||0;});
+  DB.depenses.forEach(d=>{if(new Date(d.date||0).getFullYear()===y) depHT+=d.ht||0;});
+  const caHT = DB.factures.filter(f=>new Date(f.date||0).getFullYear()===y).reduce((s,f)=>s+(f.montantHT||0),0);
+  const bic  = Math.max(0,(caHT-depHT)*0.25);
+  const imf  = Math.max(400000, caTTC*0.02);
+  const impot = Math.max(bic,imf);
+  const acompte = Math.round(impot/3);
+  const dev = DB.settings.devise||"F CFA";
+  const fmt = n => Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
+
+  modal(`<h2>💳 Enregistrer un paiement d'acompte</h2>
+  <div style="padding:10px 14px;background:var(--papier);border-radius:6px;font-size:12px;margin-bottom:14px">
+    Impôt estimé <strong>${fmt(impot)}</strong> — Acompte (1/3) : <strong>${fmt(acompte)}</strong>
+  </div>
+  <div class="two">
+    <div class="field"><label>Date de paiement *</label>
+      <input id="ac-date" type="date" value="${todayISO()}">
+    </div>
+    <div class="field"><label>Fraction</label>
+      <select id="ac-fraction">
+        <option value="1">1ʳᵉ fraction (avant 20/04/${y})</option>
+        <option value="2">2ᵉ fraction (avant 20/07/${y})</option>
+        <option value="3">3ᵉ fraction (avant 20/09/${y})</option>
+        <option value="solde">Solde annuel</option>
+      </select>
+    </div>
+  </div>
+  <div class="two">
+    <div class="field"><label>Montant payé *</label>
+      <input id="ac-montant" type="number" step="1" value="${acompte}">
+    </div>
+    <div class="field"><label>Mode de paiement</label>
+      <select id="ac-mode">
+        <option value="virement">Virement bancaire</option>
+        <option value="cheque">Chèque</option>
+        <option value="especes">Espèces</option>
+      </select>
+    </div>
+  </div>
+  <div class="field"><label>N° de quittance / référence</label>
+    <input id="ac-ref" placeholder="ex : QUI-2026-0034">
+  </div>
+  <div class="field"><label>Note</label>
+    <input id="ac-note" placeholder="ex : Centre II Plateaux 2">
+  </div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="saveAcompte()">Enregistrer</button>
+  </div>`);
+}
+
+async function saveAcompte(){
+  const gv = id => document.getElementById(id)?.value?.trim()||"";
+  const montant = +document.getElementById("ac-montant").value||0;
+  if(!montant){toast("Montant requis");return;}
+  // Sauvegarder comme dépense catégorie "Taxes & impôts"
+  const dep = {
+    id:          crypto.randomUUID(),
+    date:        gv("ac-date"),
+    libelle:     `Acompte BIC/IMF — ${gv("ac-fraction")}ᵉ fraction ${new Date().getFullYear()}`,
+    categorie:   "Taxes & impôts",
+    ht:          montant,
+    tva:         0,
+    ttc:         montant,
+    fournisseur: "DGI — Centre des Impôts",
+    numero_piece:gv("ac-ref"),
+    mode_paiement: gv("ac-mode"),
+    statut_paiement:"payee",
+    note:        gv("ac-note"),
+  };
+  const ok = await dbUpsert("depenses", dep);
+  if(!ok) return;
+  (DB.depenses = DB.depenses||[]).push(dep);
+  toast(`✅ Acompte de ${montant.toLocaleString("fr-FR")} ${DB.settings.devise||"F CFA"} enregistré`);
+  closeOverlays();
+  go("fiscalite");
+}
+
+// ── Impression fiche fiscale ─────────────────────────────────────
+function printFiscalite(){
+  const y   = new Date().getFullYear();
+  const co  = DB.settings.company||{};
+  const dev = DB.settings.devise||"F CFA";
+  const fmt = n => Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
+
+  let caTTC=0, caHT=0, depHT=0, tvaCollectee=0;
+  DB.factures.forEach(f=>{
+    if(new Date(f.date||0).getFullYear()===y){
+      caTTC+=f.montantTTC||0; caHT+=f.montantHT||0; tvaCollectee+=f.montantTVA||0;
+    }
+  });
+  DB.depenses.forEach(d=>{if(new Date(d.date||0).getFullYear()===y) depHT+=d.ht||0;});
+  const resultat = caHT-depHT;
+  const bic      = Math.max(0,resultat*0.25);
+  const imf      = Math.max(400000,caTTC*0.02);
+  const impot    = Math.max(bic,imf);
+  const acompte  = Math.round(impot/3);
+  const droitCA  = caHT<=5e6?caHT*0.004:caHT<=2e7?20000+(caHT-5e6)*0.005:
+                   caHT<=1e8?95000+(caHT-2e7)*0.006:caHT<=5e8?575000+(caHT-1e8)*0.007:
+                   3375000+(caHT-5e8)*0.008;
+  const patente  = Math.round(droitCA+18000);
+
+  // Acomptes déjà payés (dépenses catégorie "Taxes & impôts" cette année)
+  const acomptesPaids = DB.depenses.filter(d=>
+    d.categorie==="Taxes & impôts" && new Date(d.date||0).getFullYear()===y);
+  const totalPaid = acomptesPaids.reduce((s,d)=>s+(+d.ttc||0),0);
+  const resteDu   = Math.max(0,impot-totalPaid);
+
+  const html=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+<title>Fiche fiscale ${y} — ${esc(co.name||"")}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Inter',Arial,sans-serif;color:#1A1A1C;background:#e8e8e8;padding:20px}
+  .page{width:794px;background:#fff;margin:0 auto;box-shadow:0 4px 20px rgba(0,0,0,.12)}
+  @media print{body{background:#fff;padding:0}.page{box-shadow:none}.no-print{display:none}@page{margin:8mm;size:A4}}
+  table{width:100%;border-collapse:collapse}
+  td,th{padding:7px 12px;border-bottom:1px solid #eee;font-size:12px}
+</style></head><body>
+<div class="page">
+  <div style="height:5px;display:flex">
+    <div style="flex:1;background:#00AEEF"></div><div style="flex:1;background:#EC008C"></div>
+    <div style="flex:1;background:#FFC400"></div><div style="flex:1;background:#1A1A1C"></div>
+  </div>
+  <div style="padding:24px 28px">
+
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;padding-bottom:14px;border-bottom:2px solid #1A1A1C">
+      <div>
+        <div style="font-size:20px;font-weight:800">${esc(co.name||"CREATIS STUDIO")}</div>
+        <div style="font-size:10px;color:#8A8E97;letter-spacing:.18em;text-transform:uppercase;margin-top:2px">${esc(co.activite||"")}</div>
+        <div style="font-size:10px;color:#777;margin-top:6px">RC ${esc(co.rc||"")} · CC ${esc(co.cc||"")} · Centre : ${esc(co.centre||"")}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:22px;font-weight:800;color:#1A1A1C">FICHE FISCALE</div>
+        <div style="font-size:13px;font-weight:700;color:#EC008C">Exercice ${y}</div>
+        <div style="font-size:10px;color:#8A8E97;margin-top:4px">${esc(co.regime||"Réel Simplifié")} · Art. 34 & 90 CGI CI</div>
+      </div>
+    </div>
+
+    <!-- Résultat comptable -->
+    <h3 style="font-size:13px;font-weight:700;margin-bottom:10px;padding:6px 10px;background:#1A1A1C;color:#fff;border-radius:4px">1. Compte de résultat simplifié</h3>
+    <table style="margin-bottom:20px">
+      <tr><td>Chiffre d'affaires HT</td><td style="text-align:right;font-family:monospace;font-weight:600">${fmt(caHT)}</td></tr>
+      <tr><td>Charges déductibles HT</td><td style="text-align:right;font-family:monospace;color:#922B21">− ${fmt(depHT)}</td></tr>
+      <tr style="border-top:2px solid #1A1A1C">
+        <td style="font-weight:700">Résultat fiscal</td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;color:${resultat>=0?"#137f4f":"#E0444E"}">${fmt(resultat)}</td>
+      </tr>
+    </table>
+
+    <!-- BIC / IMF -->
+    <h3 style="font-size:13px;font-weight:700;margin-bottom:10px;padding:6px 10px;background:#1A1A1C;color:#fff;border-radius:4px">2. Calcul BIC / IMF — Régime RSI</h3>
+    <table style="margin-bottom:20px">
+      <tr><td>BIC (25% du bénéfice)</td><td style="text-align:right;font-family:monospace">${fmt(bic)}</td>
+          <td style="font-size:10px;color:#777">${bic>=imf?"← RETENU":""}</td></tr>
+      <tr><td>IMF RSI (2% CA TTC, min 400 000 F)</td><td style="text-align:right;font-family:monospace">${fmt(imf)}</td>
+          <td style="font-size:10px;color:#777">${imf>bic?"← RETENU":""}</td></tr>
+      <tr style="border-top:2px solid #1A1A1C">
+        <td style="font-weight:700">Impôt dû MAX(BIC, IMF)</td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;color:#EC008C">${fmt(impot)}</td>
+        <td></td>
+      </tr>
+    </table>
+
+    <!-- Acomptes -->
+    <h3 style="font-size:13px;font-weight:700;margin-bottom:10px;padding:6px 10px;background:#1A1A1C;color:#fff;border-radius:4px">3. Acomptes provisionnels</h3>
+    <table style="margin-bottom:20px">
+      <tr style="background:#f5f5f5"><th style="text-align:left">Fraction</th><th style="text-align:center">Échéance</th><th style="text-align:right">Montant</th><th style="text-align:center">Statut</th></tr>
+      ${[["1ʳᵉ fraction",`20/04/${y}`,acompte],["2ᵉ fraction",`20/07/${y}`,acompte],["3ᵉ fraction",`20/09/${y}`,acompte]].map(([l,d,m])=>`
+      <tr><td>${l}</td><td style="text-align:center;font-family:monospace;font-size:11px">${d}</td>
+          <td style="text-align:right;font-family:monospace;font-weight:600">${fmt(m)}</td>
+          <td style="text-align:center"></td></tr>`).join("")}
+      ${acomptesPaids.length?`
+      <tr style="background:#EFF9F4;border-top:2px solid #137f4f">
+        <td style="font-weight:700;color:#137f4f">Total payé</td><td></td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;color:#137f4f">${fmt(totalPaid)}</td>
+        <td style="text-align:center;font-size:11px;color:#137f4f">✓ Enregistré</td>
+      </tr>`:""}
+      <tr style="background:${resteDu>0?"#FDE8E8":"#EFF9F4"};border-top:2px solid ${resteDu>0?"#E0444E":"#137f4f"}">
+        <td style="font-weight:700;color:${resteDu>0?"#E0444E":"#137f4f"}">Reste à payer</td><td></td>
+        <td style="text-align:right;font-family:monospace;font-weight:700;color:${resteDu>0?"#E0444E":"#137f4f"}">${fmt(resteDu)}</td>
+        <td></td>
+      </tr>
+    </table>
+
+    <!-- Patente + TVA -->
+    <div style="display:flex;gap:14px;margin-bottom:20px">
+      <div style="flex:1">
+        <h3 style="font-size:13px;font-weight:700;margin-bottom:10px;padding:6px 10px;background:#1A1A1C;color:#fff;border-radius:4px">4. Patente (estimée)</h3>
+        <table>
+          <tr><td>Droit sur CA (barème)</td><td style="text-align:right;font-family:monospace">${fmt(droitCA)}</td></tr>
+          <tr><td>Droit valeur locative</td><td style="text-align:right;font-family:monospace">${fmt(18000)}</td></tr>
+          <tr style="border-top:2px solid #1A1A1C"><td style="font-weight:700">Patente estimée</td>
+            <td style="text-align:right;font-family:monospace;font-weight:700;color:#FFC400">${fmt(patente)}</td></tr>
+        </table>
+        <div style="font-size:10px;color:#8A8E97;margin-top:6px">Échéance : 31/03/${y} · Art. 261 CGI</div>
+      </div>
+      <div style="flex:1">
+        <h3 style="font-size:13px;font-weight:700;margin-bottom:10px;padding:6px 10px;background:#1A1A1C;color:#fff;border-radius:4px">5. TVA (18%)</h3>
+        <table>
+          <tr><td>TVA collectée</td><td style="text-align:right;font-family:monospace">${fmt(tvaCollectee)}</td></tr>
+          <tr><td>TVA déductible</td><td style="text-align:right;font-family:monospace">${fmt(DB.depenses.filter(d=>new Date(d.date||0).getFullYear()===y).reduce((s,d)=>s+(+d.tva||0),0))}</td></tr>
+          <tr style="border-top:2px solid #1A1A1C"><td style="font-weight:700">TVA nette à reverser</td>
+            <td style="text-align:right;font-family:monospace;font-weight:700;color:#0a6fa0">${fmt(Math.max(0,tvaCollectee-DB.depenses.filter(d=>new Date(d.date||0).getFullYear()===y).reduce((s,d)=>s+(+d.tva||0),0)))}</td></tr>
+        </table>
+        <div style="font-size:10px;color:#8A8E97;margin-top:6px">Déclaration trimestrielle · Centre : ${esc(co.centre||"")}</div>
+      </div>
+    </div>
+
+    <!-- Signature -->
+    <div style="display:flex;justify-content:flex-end;margin-top:24px">
+      <div style="text-align:center;width:220px;font-size:10px;color:#aaa">
+        <div style="border-top:1px solid #ccc;margin-top:48px;padding-top:5px">Signature & Cachet</div>
+        <div style="font-weight:600;color:#1A1A1C;margin-top:3px">${esc(co.name||"")}</div>
+      </div>
+    </div>
+  </div>
+  <div style="padding:10px 28px;border-top:1px solid #eee;font-size:8px;color:#aaa;text-align:center">
+    Document généré le ${new Date().toLocaleDateString("fr-FR")} · Données estimatives — consulter un expert-comptable pour les déclarations officielles
+  </div>
+  <div style="height:4px;display:flex">
+    <div style="flex:1;background:#00AEEF"></div><div style="flex:1;background:#EC008C"></div>
+    <div style="flex:1;background:#FFC400"></div><div style="flex:1;background:#1A1A1C"></div>
+  </div>
+</div>
+<div class="no-print" style="text-align:center;padding:20px;gap:10px;display:flex;justify-content:center">
+  <button onclick="window.print()" style="padding:12px 32px;background:#1A1A1C;color:#fff;border:none;border-radius:30px;font-size:14px;font-weight:700;cursor:pointer">🖨️ Imprimer / PDF</button>
+  <button onclick="window.close()" style="padding:12px 20px;background:#fff;color:#1A1A1C;border:1.5px solid #ddd;border-radius:30px;font-size:14px;cursor:pointer">✕ Fermer</button>
+</div>
+</body></html>`;
+  const w=window.open("","_blank","width=900,height=740");
+  w.document.write(html); w.document.close();
+}
+
+// ── Export Excel fiche fiscale ───────────────────────────────────
+function exportFiscaliteExcel(){
+  if(typeof XLSX==="undefined"){toast("Module Excel non chargé");return;}
+  const y  = new Date().getFullYear();
+  const co = DB.settings.company||{};
+  const dev= DB.settings.devise||"F CFA";
+  const fmt= n=>Math.round(n||0);
+
+  let caTTC=0,caHT=0,depHT=0,tvaCollectee=0,tvaDed=0;
+  DB.factures.forEach(f=>{if(new Date(f.date||0).getFullYear()===y){caTTC+=f.montantTTC||0;caHT+=f.montantHT||0;tvaCollectee+=f.montantTVA||0;}});
+  DB.depenses.forEach(d=>{if(new Date(d.date||0).getFullYear()===y){depHT+=d.ht||0;tvaDed+=d.tva||0;}});
+  const bic=Math.max(0,(caHT-depHT)*0.25);
+  const imf=Math.max(400000,caTTC*0.02);
+  const impot=Math.max(bic,imf);
+  const acompte=Math.round(impot/3);
+
+  const wb=XLSX.utils.book_new();
+  const rows=[
+    [`Fiche Fiscale — ${co.name||"CREATIS STUDIO"} — Exercice ${y}`,null,null],
+    [`Régime : ${co.regime||"RSI"} · Centre : ${co.centre||""} · CC : ${co.cc||""}`],
+    [],
+    ["COMPTE DE RÉSULTAT",null,null],
+    ["Chiffre d'affaires HT","",fmt(caHT)],
+    ["Charges déductibles HT","",fmt(depHT)],
+    ["Résultat fiscal","",fmt(caHT-depHT)],
+    [],
+    ["BIC / IMF",null,null],
+    ["BIC (25% du bénéfice)","",fmt(bic)],
+    ["IMF RSI (2% CA TTC, min 400 000 F)","",fmt(imf)],
+    ["Impôt dû MAX(BIC, IMF)","",fmt(impot)],
+    [],
+    ["ACOMPTES PROVISIONNELS",null,null],
+    ["1ʳᵉ fraction (avant 20/04)",`${acompte}`,fmt(acompte)],
+    ["2ᵉ fraction (avant 20/07)",`${acompte}`,fmt(acompte)],
+    ["3ᵉ fraction (avant 20/09)",`${acompte}`,fmt(acompte)],
+    [],
+    ["TVA",null,null],
+    ["TVA collectée","",fmt(tvaCollectee)],
+    ["TVA déductible","",fmt(tvaDed)],
+    ["TVA nette à reverser","",fmt(Math.max(0,tvaCollectee-tvaDed))],
+  ];
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"]=[{wch:40},{wch:20},{wch:20}];
+  XLSX.utils.book_append_sheet(wb,ws,"Fiscalité");
+  XLSX.writeFile(wb,`Fiscalite_${co.name||"CRM"}_${y}.xlsx`);
+  toast("✅ Fiche fiscale exportée");
 }
