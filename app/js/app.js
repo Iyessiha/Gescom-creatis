@@ -2509,147 +2509,76 @@ function delProduct(id){if(!guard("catalogue"))return;confirmModal("Supprimer ce
    ============================================================ */
 function viewCompta(){
   if(!vis("compta"))return;
-  const now=new Date(),y=now.getFullYear(),m=now.getMonth();
-  const q=Math.floor(m/3);  // trimestre courant 0-3
+  window._comptaTab = window._comptaTab||"saisie";
+  const dev=DB.settings.devise||"F CFA";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
+  const y=new Date().getFullYear();
+  let caHT=0,totalChg=0,tvaC=0,tvaD=0;
+  DB.factures.forEach(f=>{if(new Date(f.date||0).getFullYear()===y){caHT+=f.montantHT||0;tvaC+=f.montantTVA||0;}});
+  DB.depenses.forEach(d=>{if(new Date(d.date||0).getFullYear()===y){totalChg+=d.ht||0;tvaD+=d.tva||0;}});
+  const resultat=caHT-totalChg;
 
-  // ── Calculs globaux ──
-  let caTotal=0,caEnc=0,tvaCollTot=0,tvaDedTot=0,depTot=0;
-  const caParMois=Array(12).fill(0);const encParMois=Array(12).fill(0);
-  DB.factures.forEach(f=>{
-    const d=new Date(f.date||f.createdAt);if(d.getFullYear()===y){caTotal+=f.montantHT||0;caParMois[d.getMonth()]+=(f.montantHT||0);}
-    (f.paiements||[]).forEach(p=>{const d2=new Date(p.date);if(d2.getFullYear()===y){caEnc+=+p.montant||0;encParMois[d2.getMonth()]+=+p.montant||0;tvaCollTot+=f.montantTVA?((f.montantTVA*(+p.montant/(f.montantTTC||1))||0)):0;}});
-  });
-  DB.depenses.forEach(d=>{depTot+=d.ttc||0;tvaDedTot+=d.tva||0;});
-  const tvaARevers=Math.round(tvaCollTot-tvaDedTot);
-  const resultat=Math.round(caEnc-depTot);
-  const impaye=DB.factures.reduce((s,f)=>s+Math.max(0,(f.montantTTC||0)-factPaid(f)),0);
-
-  // ── TVA par trimestre ──
-  const tvaParQ=Array(4).fill(null).map(()=>({coll:0,ded:0}));
-  DB.factures.forEach(f=>{(f.paiements||[]).forEach(p=>{const d=new Date(p.date);if(d.getFullYear()===y){const qi=Math.floor(d.getMonth()/3);tvaParQ[qi].coll+=f.montantTVA?f.montantTVA*(+p.montant/(f.montantTTC||1)):0;}});});
-  DB.depenses.forEach(d=>{if(d.date){const dd=new Date(d.date);if(dd.getFullYear()===y){const qi=Math.floor(dd.getMonth()/3);tvaParQ[qi].ded+=d.tva||0;}}});
-
-  // ── Vieillissement créances ──
-  const aged=[0,30,60,90].map((j,i,arr)=>({label:i===0?"< 30 j":`${j}–${arr[i+1]||999} j`,total:0,nb:0}));
-  DB.factures.filter(f=>factStatut(f)!=="payée").forEach(f=>{
-    const jours=f.echeance?Math.round((now-new Date(f.echeance))/86400000):0;
-    const reste=Math.max(0,(f.montantTTC||0)-factPaid(f));
-    const bucket=jours<0?0:jours<30?1:jours<60?2:3;
-    aged[bucket].total+=reste;aged[bucket].nb++;
-  });
-
-  const moisLabels=["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"];
-  const maxBar=Math.max(1,...caParMois,...encParMois);
-
+  $("#pg-title").textContent="Comptabilité";
+  $("#pg-sub").textContent="Exercice "+y+" — SYSCOHADA · Régime Réel Simplifié";
   $("#pg-actions").innerHTML=`
-    <button class="btn btn-primary act-edit" onclick="editDepense()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouvelle dépense</button>
-    <button class="btn" onclick="openBalance()" style="border-color:var(--mag);color:var(--mag)">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 7h7l-5.5 4 2 7L12 17l-6.5 3 2-7L2 9h7z"/></svg>
-      Balance comptable
-    </button>
-    <button class="btn" onclick="exportExcel('depenses')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button>`;
+    <button class="btn btn-primary act-edit" onclick="editDepense()">+ Dépense</button>
+    <button class="btn" onclick="openSaisieCompta()" style="border-color:var(--cyan);color:var(--cyan)">✏️ Écriture</button>
+    <button class="btn" onclick="openBalance()" style="border-color:var(--mag);color:var(--mag)">⚖️ Balance</button>
+    <button class="btn" style="border-color:#1D6F42;color:#1D6F42" onclick="exportExcel('depenses')">📊 Excel</button>`;
+
+  const tabs=[
+    {k:"saisie",l:"📝 Journal de saisie"},
+    {k:"grandlivre",l:"📒 Grand Livre"},
+    {k:"plan",l:"📋 Plan comptable"},
+    {k:"depenses",l:"💸 Dépenses"},
+  ];
 
   $("#view").innerHTML=`
-  <!-- KPIs -->
-  <div class="grid kpis" style="margin-bottom:16px">
-    <div class="card kpi c-cyan"><span class="tick"></span><div class="lab">CA Facturé ${y} (HT)</div><div class="val tabnum">${fcfa(Math.round(caTotal))}</div><div class="delta">Encaissé : ${fcfa(Math.round(caEnc))}</div></div>
-    <div class="card kpi c-mag"><span class="tick"></span><div class="lab">Reste à encaisser</div><div class="val tabnum">${fcfa(Math.round(impaye))}</div><div class="delta">${DB.factures.filter(f=>factStatut(f)!=="payée").length} facture(s) ouvertes</div></div>
-    <div class="card kpi ${tvaARevers>=0?"c-jaune":"c-cyan"}"><span class="tick"></span><div class="lab">TVA nette à reverser</div><div class="val tabnum">${fcfa(Math.round(tvaARevers))}</div><div class="delta">Collectée ${fcfa(Math.round(tvaCollTot))} / Déd. ${fcfa(Math.round(tvaDedTot))}</div></div>
-    <div class="card kpi ${resultat>=0?"c-cyan":"c-mag"}"><span class="tick"></span><div class="lab">Résultat ${y}</div><div class="val tabnum">${fcfa(resultat)}</div><div class="delta">Enc. ${fcfa(Math.round(caEnc))} − Dép. ${fcfa(Math.round(depTot))}</div></div>
+  <div class="grid kpis" style="margin-bottom:14px">
+    <div class="card kpi c-cyan"><span class="tick"></span>
+      <div class="lab">CA HT ${y}</div><div class="val tabnum">${fmt(caHT)}</div></div>
+    <div class="card kpi c-rouge"><span class="tick"></span>
+      <div class="lab">Charges HT</div><div class="val tabnum">${fmt(totalChg)}</div></div>
+    <div class="card kpi ${resultat>=0?"c-noir":"c-rouge"}"><span class="tick"></span>
+      <div class="lab">Résultat net</div>
+      <div class="val tabnum" style="color:${resultat>=0?"var(--ok)":"var(--danger)"}">${fmt(resultat)}</div></div>
+    <div class="card kpi c-mag"><span class="tick"></span>
+      <div class="lab">TVA à reverser</div>
+      <div class="val tabnum">${fmt(Math.max(0,tvaC-tvaD))}</div></div>
   </div>
-
-  <!-- Graphe CA + encaissements -->
-  <div class="two-13" style="margin-bottom:16px">
-    <div class="card panel">
-      <div class="panel-h"><h3>Évolution CA & Encaissements ${y}</h3><div class="spacer"></div><span class="micro">HT / mois</span></div>
-      <div style="overflow-x:auto"><div style="display:flex;align-items:flex-end;gap:6px;height:160px;padding-top:8px;min-width:400px">
-        ${caParMois.map((ca,i)=>{
-          const hCA=Math.max(4,Math.round(ca/maxBar*130));
-          const hEnc=Math.max(0,Math.round(encParMois[i]/maxBar*130));
-          return`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
-            <div style="font-size:9px;color:var(--txt-2);writing-mode:vertical-lr;transform:rotate(180deg);height:30px">${ca?fcfaPlain(ca):""}</div>
-            <div style="display:flex;align-items:flex-end;gap:2px">
-              <div style="width:10px;height:${hCA}px;background:var(--cyan);border-radius:3px 3px 0 0" title="CA HT : ${fcfa(ca)}"></div>
-              <div style="width:10px;height:${hEnc}px;background:var(--ok);border-radius:3px 3px 0 0" title="Encaissé : ${fcfa(encParMois[i])}"></div>
-            </div>
-            <div class="micro">${moisLabels[i]}</div>
-          </div>`;
-        }).join("")}
-      </div>
-      <div style="display:flex;gap:14px;margin-top:6px;font-size:11px">
-        <span><span style="display:inline-block;width:10px;height:10px;background:var(--cyan);border-radius:2px;margin-right:4px"></span>CA facturé HT</span>
-        <span><span style="display:inline-block;width:10px;height:10px;background:var(--ok);border-radius:2px;margin-right:4px"></span>Encaissements</span>
-      </div>
-    </div>
-
-    <!-- TVA par trimestre -->
-    <div class="card panel">
-      <div class="panel-h"><h3>TVA — Déclaration trimestrielle ${y}</h3></div>
-      ${tvaParQ.map((tq,i)=>{
-        const net=Math.round(tq.coll-tq.ded);
-        const label=["T1 (Jan–Mar)","T2 (Avr–Jun)","T3 (Jul–Sep)","T4 (Oct–Déc)"][i];
-        const isCurrent=i===q;
-        return`<div style="padding:8px 0;border-bottom:1px solid var(--ligne-2)${isCurrent?";background:var(--papier);margin:0 -8px;padding:8px":""}">
-          <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-            <strong style="font-size:12px">${label}${isCurrent?' <span class="seg" style="font-size:10px">En cours</span>':""}</strong>
-            <span class="pill ${net>=0?"p-amber":"p-green"}" style="font-size:10px">${net>=0?"À reverser":"Crédit"} : ${fcfa(Math.abs(net))}</span>
-          </div>
-          <div style="font-size:11px;color:var(--txt-2);display:flex;justify-content:space-between">
-            <span>Collectée : ${fcfa(Math.round(tq.coll))}</span>
-            <span>Déductible : ${fcfa(Math.round(tq.ded))}</span>
-          </div>
-        </div>`;
-      }).join("")}
-    </div>
+  <div style="display:flex;gap:2px;border-bottom:2px solid var(--ligne);margin-bottom:0">
+    ${tabs.map(t=>`<button onclick="switchComptaTab('${t.k}')" id="tab-${t.k}"
+      style="padding:8px 18px;border:none;border-radius:6px 6px 0 0;cursor:pointer;font-size:12px;font-weight:600;
+      background:${window._comptaTab===t.k?"var(--carte)":"transparent"};
+      color:${window._comptaTab===t.k?"var(--cyan)":"var(--txt-2)"};
+      border-bottom:${window._comptaTab===t.k?"3px solid var(--cyan)":"3px solid transparent"};
+      margin-bottom:-2px">${t.l}</button>`).join("")}
   </div>
-
-  <!-- Vieillissement créances + répartition dépenses -->
-  <div class="two" style="margin-bottom:16px">
-    <div class="card panel">
-      <div class="panel-h"><h3>📋 Vieillissement des créances</h3><div class="spacer"></div>
-        <span class="linkish" onclick="go('factures')">Voir factures</span></div>
-      ${aged.map(b=>`<div class="barrow">
-        <div class="lab">${b.label} <span class="muted">(${b.nb})</span></div>
-        <div class="bar"><i style="width:${Math.round(b.total/Math.max(1,impaye)*100)}%;background:var(--mag)"></i></div>
-        <div class="v tabnum">${fcfaPlain(b.total)}</div>
-      </div>`).join("")}
-      ${!impaye?`<div class="empty-sm">✅ Toutes les factures sont réglées</div>`:""}
-    </div>
-
-    <div class="card panel">
-      <div class="panel-h"><h3>💸 Dépenses par catégorie</h3></div>
-      ${Object.entries(DB.depenses.reduce((acc,d)=>{acc[d.categorie||"Autre"]=(acc[d.categorie||"Autre"]||0)+(+d.ttc||0);return acc},{}))
-        .sort((a,b)=>b[1]-a[1]).slice(0,6)
-        .map(([k,v])=>`<div class="barrow">
-          <div class="lab">${k}</div>
-          <div class="bar"><i style="width:${Math.round(v/Math.max(1,depTot)*100)}%;background:var(--noir)"></i></div>
-          <div class="v tabnum">${fcfaPlain(v)}</div>
-        </div>`).join("")||`<div class="empty-sm">Aucune dépense enregistrée</div>`}
-    </div>
-  </div>
-
-  <!-- Journal dépenses -->
-  <div class="card panel">
-    <div class="panel-h"><h3>📒 Journal des dépenses</h3><div class="spacer"></div><span class="micro">${DB.depenses.length} entrée(s)</span></div>
-    ${!DB.depenses.length?`<div class="empty-sm">Aucune dépense enregistrée.</div>`:`
-    <div style="overflow-x:auto"><table><thead><tr>
-      <th>Date</th><th>N° Pièce</th><th>Libellé</th><th>Fournisseur</th><th>Catégorie</th>
-      <th>Mode</th><th>Statut</th><th class="r">HT</th><th class="r">TVA</th><th class="r">TTC</th><th></th>
-    </tr></thead><tbody>
-    ${[...DB.depenses].sort((a,b)=>(b.date||"")>(a.date||"")?(1):(-1)).map(d=>`<tr>
-      <td class="meta">${fdate(d.date)}</td>
-      <td class="meta" style="font-family:monospace;font-size:11px">${esc(d.numeroPiece||d.numero_piece||"—")}</td>
-      <td class="nm">${esc(d.libelle)}</td>
-      <td class="meta">${esc(fournisseurName(d.fournisseurId||d.fournisseur_id))}</td>
-      <td><span class="seg">${esc(d.categorie||"—")}</span></td>
-      <td class="meta">${esc(d.modePaiement||d.mode_paiement||"—")}</td>
-      <td>${(d.statutPaiement||d.statut_paiement||"payé")==="payé"?'<span class="pill p-green"><span class="dot"></span>Payé</span>':'<span class="pill p-amber"><span class="dot"></span>En attente</span>'}</td>
-      <td class="r tabnum">${fcfa(d.ht)}</td><td class="r tabnum">${fcfa(d.tva)}</td><td class="r tabnum">${fcfa(d.ttc)}</td>
-      <td class="r"><button class="btn btn-sm btn-ghost act-edit" onclick="editDepense('${d.id}')">Modifier</button></td>
-    </tr>`).join("")}
-    </tbody></table></div>`}
-  </div>`;
+  <div id="compta-tab-content" style="padding-top:14px"></div>`;
+  renderComptaTab();
 }
+
+function switchComptaTab(tab){
+  window._comptaTab=tab;
+  document.querySelectorAll("[id^='tab-']").forEach(b=>{
+    const k=b.id.replace("tab-","");
+    const a=k===tab;
+    b.style.background=a?"var(--carte)":"transparent";
+    b.style.color=a?"var(--cyan)":"var(--txt-2)";
+    b.style.borderBottom=a?"3px solid var(--cyan)":"3px solid transparent";
+  });
+  renderComptaTab();
+}
+
+function renderComptaTab(){
+  const tab=window._comptaTab||"saisie";
+  const el=document.getElementById("compta-tab-content"); if(!el)return;
+  if(tab==="saisie")      renderJournalSaisie(el);
+  else if(tab==="grandlivre") renderGrandLivre(el);
+  else if(tab==="plan")   renderPlanComptable(el);
+  else if(tab==="depenses") renderDepCompta(el);
+}
+
 
 function editDepense(id){
   if(!guard("compta"))return;
@@ -4171,4 +4100,363 @@ function setBat(cmdId, newStat){
   toast(`✅ BAT mis à jour : ${BAT_LABELS[newStat]||newStat}`);
   closeOverlays();
   go("infographistes");
+}
+
+/* ============================================================
+   COMPTABILITÉ — Onglets style Sage
+   Journal de saisie · Grand Livre · Plan comptable · Dépenses
+   ============================================================ */
+
+// ── JOURNAL DE SAISIE (style Sage) ─────────────────────────────
+function renderJournalSaisie(el){
+  const fmtD=s=>s?new Date(s).toLocaleDateString("fr-FR"):"—";
+  const dev=DB.settings.devise||"F CFA";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ");
+  const JOURNAUX={VE:"Ventes",AC:"Achats",BQ:"Banque",CA:"Caisse",OD:"Opér. div.",SA:"Salaires"};
+  const JC={VE:"var(--ok)",AC:"var(--mag)",BQ:"var(--cyan)",CA:"var(--jaune)",OD:"#7D3C98",SA:"#E67E22"};
+
+  // Générer les écritures automatiques depuis factures + dépenses
+  const ecritures = buildEcritures();
+
+  const filterJnl = el.querySelector?.("select#fil-jnl")?.value||"";
+  const filterPer = el.querySelector?.("select#fil-per")?.value||new Date().getFullYear().toString();
+
+  el.innerHTML=`
+  <div class="card panel">
+    <div class="panel-h">
+      <h3>Journal de saisie</h3><div class="spacer"></div>
+      <select id="fil-jnl" onchange="renderComptaTab()" style="width:140px">
+        <option value="">Tous les journaux</option>
+        ${Object.entries(JOURNAUX).map(([k,v])=>`<option value="${k}">${k} — ${v}</option>`).join("")}
+      </select>
+      <select id="fil-per" onchange="renderComptaTab()" style="width:110px">
+        ${[0,1,2,3,4,5,6,7,8,9,10,11].map(m=>{
+          const d=new Date(new Date().getFullYear(),m,1);
+          return`<option value="${new Date().getFullYear()}-${String(m+1).padStart(2,'0')}"
+            ${m===new Date().getMonth()?"selected":""}>${d.toLocaleDateString("fr-FR",{month:"short",year:"2-digit"})}</option>`;
+        }).join("")}
+        <option value="${new Date().getFullYear()}">— Exercice ${new Date().getFullYear()} —</option>
+      </select>
+      ${wr("compta")?`<button class="btn btn-sm btn-primary" onclick="openSaisieCompta()">+ Écriture OD</button>`:""}
+    </div>
+    <div style="overflow-x:auto">
+    <table style="font-size:12px">
+      <thead><tr style="background:var(--encre);color:#fff">
+        <th style="padding:7px 10px;white-space:nowrap">Date</th>
+        <th style="padding:7px 10px">Jnl</th>
+        <th style="padding:7px 10px">N° Pièce</th>
+        <th style="padding:7px 10px">Compte</th>
+        <th style="padding:7px 10px">Intitulé du compte</th>
+        <th style="padding:7px 10px">Libellé</th>
+        <th style="padding:7px 10px;text-align:right">Débit</th>
+        <th style="padding:7px 10px;text-align:right">Crédit</th>
+      </tr></thead>
+      <tbody>
+      ${ecritures.length===0?`<tr><td colspan="8" class="empty">Aucune écriture</td></tr>`:""}
+      ${ecritures.map((e,i)=>`
+        <tr style="background:${i%2===0?"#fff":"var(--papier)"}">
+          <td style="padding:5px 10px;white-space:nowrap;color:var(--txt-2)">${fmtD(e.date)}</td>
+          <td style="padding:5px 10px">
+            <span style="padding:1px 7px;border-radius:4px;font-size:10px;font-weight:700;background:${JC[e.journal]||"var(--txt-3)"}20;color:${JC[e.journal]||"var(--txt-2)"};border:1px solid ${JC[e.journal]||"var(--ligne)"}40">${e.journal}</span>
+          </td>
+          <td style="padding:5px 10px;font-family:monospace;font-size:11px;color:var(--txt-2)">${esc(e.piece||"—")}</td>
+          <td style="padding:5px 10px;font-family:monospace;font-weight:600">${esc(e.compte||"")}</td>
+          <td style="padding:5px 10px;color:var(--txt-2)">${esc(e.compteLib||"")}</td>
+          <td style="padding:5px 10px">${esc(e.libelle||"")}</td>
+          <td style="padding:5px 10px;text-align:right;font-family:monospace;color:${e.debit?"var(--ok)":"var(--txt-3)"};font-weight:${e.debit?"600":"400"}">${e.debit?fmt(e.debit):""}</td>
+          <td style="padding:5px 10px;text-align:right;font-family:monospace;color:${e.credit?"var(--danger)":"var(--txt-3)"};font-weight:${e.credit?"600":"400"}">${e.credit?fmt(e.credit):""}</td>
+        </tr>`).join("")}
+      </tbody>
+      ${ecritures.length?`
+      <tfoot>
+        <tr style="background:var(--encre);color:#fff;font-weight:700">
+          <td colspan="6" style="padding:7px 10px">TOTAUX</td>
+          <td style="padding:7px 10px;text-align:right;font-family:monospace;color:#FFC400">${fmt(ecritures.reduce((s,e)=>s+(+e.debit||0),0))}</td>
+          <td style="padding:7px 10px;text-align:right;font-family:monospace;color:#FFC400">${fmt(ecritures.reduce((s,e)=>s+(+e.credit||0),0))}</td>
+        </tr>
+      </tfoot>`:""}
+    </table>
+    </div>
+  </div>`;
+}
+
+// Construire les écritures comptables depuis factures + dépenses + journal_entries
+function buildEcritures(){
+  const ecr=[];
+  const y=new Date().getFullYear();
+
+  // Factures émises → Journal VE
+  DB.factures.forEach(f=>{
+    if(new Date(f.date||0).getFullYear()!==y)return;
+    const num=f.numero||"";
+    // Débit 411 Clients (TTC)
+    ecr.push({date:f.date,journal:"VE",piece:num,compte:"411",compteLib:"Clients",libelle:clientName(f.clientId),debit:f.montantTTC||0,credit:0});
+    // Crédit 701 Ventes (HT)
+    ecr.push({date:f.date,journal:"VE",piece:num,compte:"701",compteLib:"Ventes / Prestations",libelle:clientName(f.clientId),debit:0,credit:f.montantHT||0});
+    // Crédit 44571 TVA collectée
+    if(f.montantTVA) ecr.push({date:f.date,journal:"VE",piece:num,compte:"44571",compteLib:"TVA collectée",libelle:"TVA "+f.numero,debit:0,credit:f.montantTVA||0});
+    // Paiements reçus → Journal BQ/CA
+    (f.paiements||[]).forEach(p=>{
+      ecr.push({date:p.date,journal:"BQ",piece:num,compte:"512",compteLib:"Banque",libelle:"Encaissement "+num,debit:+p.montant||0,credit:0});
+      ecr.push({date:p.date,journal:"BQ",piece:num,compte:"411",compteLib:"Clients",libelle:"Encaissement "+num,debit:0,credit:+p.montant||0});
+    });
+  });
+
+  // Dépenses → Journal AC
+  DB.depenses.forEach(d=>{
+    if(new Date(d.date||0).getFullYear()!==y)return;
+    const piece=d.numero_piece||"";
+    const compte401="401"; const lib401="Fournisseurs";
+    // Débit 6xx Charges (HT)
+    const {c6,l6}=catToCompte(d.categorie||"");
+    ecr.push({date:d.date,journal:"AC",piece,compte:c6,compteLib:l6,libelle:esc(d.libelle||""),debit:d.ht||0,credit:0});
+    // Débit 44521 TVA déductible
+    if(d.tva) ecr.push({date:d.date,journal:"AC",piece,compte:"44521",compteLib:"TVA déductible",libelle:esc(d.libelle||""),debit:d.tva||0,credit:0});
+    // Crédit 401 Fournisseurs (TTC)
+    ecr.push({date:d.date,journal:"AC",piece,compte:compte401,compteLib:lib401,libelle:esc(d.libelle||""),debit:0,credit:d.ttc||0});
+    // Si payée → solde Fournisseurs
+    if(d.statut_paiement==="payee"){
+      ecr.push({date:d.date,journal:"BQ",piece,compte:compte401,compteLib:"Fournisseurs",libelle:"Règlement "+esc(d.libelle||""),debit:d.ttc||0,credit:0});
+      ecr.push({date:d.date,journal:"BQ",piece,compte:"512",compteLib:"Banque",libelle:"Règlement "+esc(d.libelle||""),debit:0,credit:d.ttc||0});
+    }
+  });
+
+  // Écritures manuelles OD
+  (DB.journal||[]).forEach(j=>{
+    if(new Date(j.date||0).getFullYear()!==y)return;
+    ecr.push({date:j.date,journal:j.journal_code||j.type||"OD",piece:j.numero_piece||j.reference||"",compte:j.compte_num||j.compte||"",compteLib:j.compte_lib||"",libelle:j.libelle||"",debit:j.debit||0,credit:j.credit||0});
+  });
+
+  return ecr.sort((a,b)=>new Date(a.date||0)-new Date(b.date||0));
+}
+
+function catToCompte(cat){
+  const map={"Fournitures":{c:"601",l:"Achats de marchandises"},"Sous-traitance":{c:"604",l:"Sous-traitance"},"Transport":{c:"624",l:"Transport"},"Loyer":{c:"622",l:"Loyers"},"Communication":{c:"626",l:"Télécommunications"},"Frais bancaires":{c:"627",l:"Frais bancaires"},"Équipement":{c:"244",l:"Matériel"},"Salaires":{c:"661",l:"Rémunérations"},"Taxes & impôts":{c:"646",l:"Taxes & impôts"}};
+  const r=map[cat]||{c:"658",l:"Charges diverses"};
+  return {c6:r.c,l6:r.l};
+}
+
+// ── GRAND LIVRE (style Sage) ────────────────────────────────────
+function renderGrandLivre(el){
+  const fmtD=s=>s?new Date(s).toLocaleDateString("fr-FR"):"—";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ");
+  const dev=DB.settings.devise||"F CFA";
+  const y=new Date().getFullYear();
+
+  const allEcr=buildEcritures();
+  // Regrouper par compte
+  const comptes={};
+  allEcr.forEach(e=>{
+    if(!comptes[e.compte]) comptes[e.compte]={lib:e.compteLib,ecr:[]};
+    comptes[e.compte].ecr.push(e);
+  });
+
+  const comptesSorted=Object.entries(comptes).sort((a,b)=>a[0].localeCompare(b[0]));
+
+  // Plan comptable pour filtrer
+  const planOpts=(DB.planCompta||[]).filter(p=>p.type_compte==="detail")
+    .sort((a,b)=>a.compte.localeCompare(b.compte))
+    .map(p=>`<option value="${p.compte}">${p.compte} — ${p.libelle}</option>`).join("");
+
+  const filtCompte=el.querySelector?.("select#fil-gl-compte")?.value||"";
+
+  el.innerHTML=`
+  <div class="card panel">
+    <div class="panel-h">
+      <h3>Grand Livre</h3><div class="spacer"></div>
+      <select id="fil-gl-compte" onchange="renderComptaTab()" style="width:280px">
+        <option value="">Tous les comptes</option>${planOpts}
+      </select>
+    </div>
+    ${comptesSorted.filter(([num])=>!filtCompte||num===filtCompte).map(([num,data])=>{
+      const totD=data.ecr.reduce((s,e)=>s+(+e.debit||0),0);
+      const totC=data.ecr.reduce((s,e)=>s+(+e.credit||0),0);
+      const solde=totD-totC;
+      const plan=(DB.planCompta||[]).find(p=>p.compte===num);
+      return`
+      <div style="margin-bottom:18px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--encre);color:#fff;border-radius:6px 6px 0 0">
+          <div style="font-family:monospace;font-size:13px;font-weight:700">${num} — ${data.lib||plan?.libelle||""}</div>
+          <div style="font-size:11px;color:rgba(255,255,255,.6)">${data.ecr.length} écriture(s)</div>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="background:var(--papier)">
+            <th style="padding:5px 10px;text-align:left">Date</th>
+            <th style="padding:5px 10px;text-align:left">Jnl</th>
+            <th style="padding:5px 10px;text-align:left">Libellé</th>
+            <th style="padding:5px 10px;text-align:right">Débit</th>
+            <th style="padding:5px 10px;text-align:right">Crédit</th>
+            <th style="padding:5px 10px;text-align:right">Solde</th>
+          </tr></thead>
+          <tbody>
+          ${(()=>{let sol=0;return data.ecr.map((e,i)=>{sol+=((+e.debit||0)-(+e.credit||0));return`
+            <tr style="background:${i%2?"var(--papier)":"#fff"};border-bottom:1px solid var(--ligne)">
+              <td style="padding:4px 10px;white-space:nowrap">${fmtD(e.date)}</td>
+              <td style="padding:4px 10px;font-size:10px;font-weight:700;color:var(--cyan)">${e.journal}</td>
+              <td style="padding:4px 10px">${esc(e.libelle||"")}</td>
+              <td style="padding:4px 10px;text-align:right;font-family:monospace;color:var(--ok)">${e.debit?fmt(e.debit):""}</td>
+              <td style="padding:4px 10px;text-align:right;font-family:monospace;color:var(--danger)">${e.credit?fmt(e.credit):""}</td>
+              <td style="padding:4px 10px;text-align:right;font-family:monospace;font-weight:600;color:${sol>=0?"var(--ok)":"var(--danger)"}">${fmt(Math.abs(sol))} ${sol>=0?"D":"C"}</td>
+            </tr>`;}).join("")})()}
+          </tbody>
+          <tfoot>
+            <tr style="background:#1A1A1C;color:#fff;font-weight:700">
+              <td colspan="3" style="padding:6px 10px">TOTAUX ${num}</td>
+              <td style="padding:6px 10px;text-align:right;font-family:monospace;color:#FFC400">${fmt(totD)}</td>
+              <td style="padding:6px 10px;text-align:right;font-family:monospace;color:#FFC400">${fmt(totC)}</td>
+              <td style="padding:6px 10px;text-align:right;font-family:monospace;color:${solde>=0?"#9AEFC6":"#FFAAAA"}">${fmt(Math.abs(solde))} ${solde>=0?"D":"C"}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+
+// ── PLAN COMPTABLE ───────────────────────────────────────────────
+function renderPlanComptable(el){
+  const plan=(DB.planCompta||[]).sort((a,b)=>a.compte.localeCompare(b.compte));
+  const classes=[...new Set(plan.map(p=>p.classe))].filter(Boolean).sort();
+  const classeLabel={1:"Capitaux propres",2:"Actif immobilisé",3:"Stocks",4:"Comptes de tiers",5:"Trésorerie",6:"Charges",7:"Produits",8:"Résultats"};
+
+  el.innerHTML=`
+  <div class="card panel">
+    <div class="panel-h"><h3>Plan comptable SYSCOHADA — Côte d'Ivoire</h3><div class="spacer"></div>
+      <span class="meta">${plan.filter(p=>p.type_compte==="detail").length} comptes de détail</span>
+    </div>
+    ${classes.map(cls=>{
+      const comptesCls=plan.filter(p=>p.classe===cls);
+      return`
+      <div style="margin-bottom:16px">
+        <div style="padding:7px 12px;background:var(--encre);color:#fff;border-radius:6px;font-weight:700;font-size:12px;letter-spacing:.04em">
+          CLASSE ${cls} — ${classeLabel[cls]||""}
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:2px">
+          ${comptesCls.map((p,i)=>{
+            const isClasse=p.type_compte==="classe";
+            const isGroupe=p.type_compte==="groupe";
+            if(isClasse)return"";
+            return`<tr style="background:${isGroupe?"var(--papier)":"#fff"};border-bottom:1px solid var(--ligne)">
+              <td style="padding:5px 10px 5px ${isGroupe?"10":"24"}px;font-family:monospace;font-weight:${isGroupe?"700":"400"};color:${isGroupe?"var(--encre)":"var(--txt-2)"}">${p.compte}</td>
+              <td style="padding:5px 10px;font-weight:${isGroupe?"600":"400"};font-size:${isGroupe?"12":"11.5"}px">${esc(p.libelle||"")}</td>
+              <td style="padding:5px 10px;text-align:center">
+                <span style="padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;background:${p.sens==="debiteur"?"var(--ok)18":"var(--danger)18"};color:${p.sens==="debiteur"?"var(--ok)":"var(--danger)"}">${p.sens==="debiteur"?"D":"C"}</span>
+              </td>
+            </tr>`;
+          }).join("")}
+        </table>
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+
+// ── DÉPENSES (onglet dans Compta) ────────────────────────────────
+function renderDepCompta(el){
+  const dev=DB.settings.devise||"F CFA";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
+  const fmtD=s=>s?new Date(s).toLocaleDateString("fr-FR"):"—";
+  const stPill={payee:`<span class="pill p-green" style="font-size:10px"><span class="dot"></span>Payée</span>`,impayee:`<span class="pill p-red" style="font-size:10px"><span class="dot"></span>Impayée</span>`,en_attente:`<span class="pill p-amber" style="font-size:10px"><span class="dot"></span>En attente</span>`};
+  const rows=[...DB.depenses].sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+  const totHT=rows.reduce((s,d)=>s+(+d.ht||0),0);
+  const totTTC=rows.reduce((s,d)=>s+(+d.ttc||0),0);
+  el.innerHTML=`
+  <div class="card panel">
+    <div class="panel-h"><h3>Toutes les dépenses</h3><div class="spacer"></div>
+      <span style="font-size:12px;font-weight:700">Total HT : ${fmt(totHT)} · TTC : ${fmt(totTTC)}</span>
+      ${wr("compta")?`<button class="btn btn-sm btn-primary" onclick="editDepense()">+ Dépense</button>`:""}
+    </div>
+    ${rows.length===0?`<div class="empty">Aucune dépense</div>`:`
+    <div style="overflow-x:auto">
+    <table style="font-size:12px"><thead><tr>
+      <th>Date</th><th>N° Pièce</th><th>Libellé</th><th>Catégorie</th><th>Fournisseur</th>
+      <th class="r">HT</th><th class="r">TVA</th><th class="r">TTC</th><th>Statut</th>
+    </tr></thead><tbody>
+    ${rows.map(d=>`<tr>
+      <td class="meta">${fmtD(d.date)}</td>
+      <td class="meta tabnum">${esc(d.numero_piece||"—")}</td>
+      <td><div class="nm">${esc(d.libelle||"")}</div></td>
+      <td class="meta">${esc(d.categorie||"—")}</td>
+      <td class="meta">${esc(d.fournisseur||"—")}</td>
+      <td class="r tabnum">${fmt(d.ht)}</td>
+      <td class="r tabnum" style="color:var(--cyan)">${fmt(d.tva)}</td>
+      <td class="r tabnum"><strong>${fmt(d.ttc)}</strong></td>
+      <td>${stPill[d.statut_paiement]||`<span class="pill p-grey" style="font-size:10px">${esc(d.statut_paiement||"—")}</span>`}</td>
+    </tr>`).join("")}
+    </tbody></table></div>`}
+  </div>`;
+}
+
+// ── SAISIE OD (écriture manuelle) ───────────────────────────────
+function openSaisieCompta(){
+  if(!wr("compta"))return;
+  const planOpts=(DB.planCompta||[]).filter(p=>p.type_compte==="detail")
+    .map(p=>`<option value="${p.compte}">${p.compte} — ${p.libelle}</option>`).join("");
+  modal(`<h2>✏️ Saisie d'écriture comptable</h2>
+  <div class="row2">
+    <div class="field"><label>Date *</label><input id="od-date" type="date" value="${todayISO()}"></div>
+    <div class="field"><label>Journal</label>
+      <select id="od-jnl">
+        <option value="OD">OD — Opérations diverses</option>
+        <option value="AC">AC — Achats</option>
+        <option value="VE">VE — Ventes</option>
+        <option value="BQ">BQ — Banque</option>
+        <option value="CA">CA — Caisse</option>
+        <option value="SA">SA — Salaires</option>
+      </select>
+    </div>
+  </div>
+  <div class="row2">
+    <div class="field"><label>N° Pièce</label><input id="od-piece" placeholder="ex: OD-001"></div>
+    <div class="field"><label>Libellé *</label><input id="od-lib" placeholder="ex: Régularisation TVA"></div>
+  </div>
+  <div style="border:1px solid var(--ligne);border-radius:6px;padding:12px;margin-bottom:12px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">Ligne débit</div>
+    <div class="row2">
+      <div class="field"><label>Compte débit</label>
+        <input id="od-cptD" list="od-plan" placeholder="ex: 411">
+        <datalist id="od-plan">${planOpts}</datalist>
+      </div>
+      <div class="field"><label>Montant débit</label><input id="od-deb" type="number" step="1" placeholder="0"></div>
+    </div>
+  </div>
+  <div style="border:1px solid var(--ligne);border-radius:6px;padding:12px;margin-bottom:12px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px">Ligne crédit</div>
+    <div class="row2">
+      <div class="field"><label>Compte crédit</label>
+        <input id="od-cptC" list="od-plan2" placeholder="ex: 701">
+        <datalist id="od-plan2">${planOpts}</datalist>
+      </div>
+      <div class="field"><label>Montant crédit</label><input id="od-cred" type="number" step="1" placeholder="0"></div>
+    </div>
+  </div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="saveEcritureOD()">Valider l'écriture</button>
+  </div>`);
+}
+
+async function saveEcritureOD(){
+  const gv=id=>document.getElementById(id)?.value?.trim()||"";
+  const date=gv("od-date"); if(!date){toast("Date requise");return;}
+  const libelle=gv("od-lib"); if(!libelle){toast("Libellé requis");return;}
+  const deb=+document.getElementById("od-deb").value||0;
+  const cred=+document.getElementById("od-cred").value||0;
+  if(!deb&&!cred){toast("Montant requis");return;}
+
+  const cptD=gv("od-cptD"), cptC=gv("od-cptC");
+  const findLib=c=>(DB.planCompta||[]).find(p=>p.compte===c)?.libelle||"";
+  const piece=gv("od-piece")||"OD-"+Date.now().toString().slice(-4);
+  const jnl=gv("od-jnl")||"OD";
+
+  const entries=[];
+  if(deb&&cptD) entries.push({id:crypto.randomUUID(),date,journal_code:jnl,libelle,reference:libelle,numero_piece:piece,compte_num:cptD,compte_lib:findLib(cptD),debit:deb,credit:0,tva:0});
+  if(cred&&cptC) entries.push({id:crypto.randomUUID(),date,journal_code:jnl,libelle,reference:libelle,numero_piece:piece,compte_num:cptC,compte_lib:findLib(cptC),debit:0,credit:cred,tva:0});
+
+  for(const e of entries){
+    await dbUpsert("journal_entries",e);
+    (DB.journal=DB.journal||[]).push(e);
+  }
+  toast(`✅ Écriture ${jnl} enregistrée`);
+  closeOverlays();
+  go("compta");
 }
