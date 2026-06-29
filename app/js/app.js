@@ -3259,23 +3259,23 @@ function buildBalanceData(from, to){
 
   DB.factures.forEach(f=>{
     if(!inPeriod(f.date)) return;
-    clients_deb += f.montantTTC||0;       // 411 débit (créance)
-    tva_coll    += f.montantTVA||0;       // 44571 crédit TVA collectée
+    clients_deb += f.montantTTC||0;       // 41110000 débit (créance)
+    tva_coll    += f.montantTVA||0;       // 44310000 crédit TVA collectée
   });
   (DB.factures||[]).forEach(f=>{
     (f.paiements||[]).forEach(p=>{
-      if(inPeriod(p.date)) clients_cred += +p.montant||0; // 411 crédit (encaissement)
+      if(inPeriod(p.date)) clients_cred += +p.montant||0; // 41110000 crédit (encaissement)
     });
   });
 
   DB.depenses.forEach(d=>{
     if(!inPeriod(d.date)) return;
-    fourn_cred += d.ttc||0;               // 401 crédit (dette fournisseur)
-    tva_ded    += d.tva||0;               // 44521 débit TVA déductible
+    fourn_cred += d.ttc||0;               // 40110000 crédit (dette fournisseur)
+    tva_ded    += d.tva||0;               // 44520000 débit TVA récupérable
   });
   // Paiements fournisseurs = dépenses déjà réglées
   DB.depenses.filter(d=>d.statut_paiement==="payee"&&inPeriod(d.date))
-    .forEach(d=>{ fourn_deb += d.ttc||0; }); // 401 débit (paiement)
+    .forEach(d=>{ fourn_deb += d.ttc||0; }); // 40110000 débit (paiement)
 
   // ── Classe 5 — Trésorerie ───────────────────────────────────
   const caissesByType={};
@@ -3394,12 +3394,12 @@ function renderBalance(){
       </thead>
       <tbody>
         ${section("Classe 4 — Comptes de tiers","#2C3E50")}
-        ${row("411","Clients — Factures émises",d.clients_deb,d.clients_cred)}
-        ${row("401","Fournisseurs — Dépenses",d.fourn_deb,d.fourn_cred)}
-        ${row("44571","TVA collectée (factures)",d.tva_ded,d.tva_coll)}
+        ${row("41110000","CLIENTS — Créances sur ventes",d.clients_deb,d.clients_cred)}
+        ${row("40110000","FOURNISSEURS — Dettes sur achats",d.fourn_deb,d.fourn_cred)}
+        ${row("44310000","TVA FACTUREE SUR VENTE",d.tva_ded,d.tva_coll)}
 
         ${section("Classe 5 — Trésorerie","#1A5276")}
-        ${d.caisses.map(c=>row("5"+{"especes":"71","banque":"12","mobile_money":"14","cheque":"13"}[c.type]||"71",
+        ${d.caisses.map(c=>row({"especes":"57100000","banque":"52100000","mobile_money":"52100000","cheque":"52100000"}[c.type]||"57100000",
           c.nom, c.soldeInit+c.deb, c.cred)).join("")}
 
         ${section("Classe 6 — Charges","#922B21")}
@@ -3411,7 +3411,7 @@ function renderBalance(){
 
         ${section("Résultat","#7D3C98")}
         ${resultat>=0
-          ? row("120","Résultat bénéficiaire",0,resultat)
+          ? row("89500000","IMPOT MINIMUM FORFAITAIRE / RESULTAT",0,resultat)
           : row("129","Résultat déficitaire",Math.abs(resultat),0)}
 
         <!-- Totaux généraux -->
@@ -3524,17 +3524,17 @@ function printBalance(){
       </thead>
       <tbody>
         ${sec("Classe 4 — Comptes de tiers","#2C3E50")}
-        ${row("411","Clients — Créances sur ventes",d.clients_deb,d.clients_cred)}
-        ${row("401","Fournisseurs — Dettes sur achats",d.fourn_deb,d.fourn_cred)}
-        ${row("44571","TVA collectée / TVA déductible",d.tva_ded,d.tva_coll)}
+        ${row("41110000","CLIENTS — Créances sur ventes",d.clients_deb,d.clients_cred)}
+        ${row("40110000","FOURNISSEURS — Dettes sur achats",d.fourn_deb,d.fourn_cred)}
+        ${row("44310000","TVA FACTUREE SUR VENTE / 44520000 RECUPERABLE",d.tva_ded,d.tva_coll)}
         ${sec("Classe 5 — Trésorerie","#1A5276")}
-        ${d.caisses.map(c=>row("5"+{"especes":"71","banque":"12","mobile_money":"14","cheque":"13"}[c.type]||"71",c.nom,c.soldeInit+c.deb,c.cred)).join("")}
+        ${d.caisses.map(c=>row({"especes":"57100000","banque":"52100000","mobile_money":"52100000","cheque":"52100000"}[c.type]||"57100000",c.nom,c.soldeInit+c.deb,c.cred)).join("")}
         ${sec("Classe 6 — Charges","#922B21")}
         ${d.charges.length?d.charges.map(c=>row(c.compte,c.libelle,c.deb,c.cred)).join(""):"<tr><td colspan='6' style='padding:8px;color:#aaa;font-size:11px'>Aucune charge</td></tr>"}
         ${sec("Classe 7 — Produits","#1E8449")}
-        ${row("701","Ventes de produits et prestations",0,d.produits_cred)}
+        ${row("70110000","VENTE DE MARCHANDISES",0,d.produits_cred)}
         ${sec("Résultat de l'exercice","#7D3C98")}
-        ${res>=0?row("120","Résultat bénéficiaire",0,res):row("129","Résultat déficitaire (perte)",Math.abs(res),0)}
+        ${res>=0?row("89500000","IMPOT MINIMUM FORFAITAIRE / RESULTAT",0,res):row("89500000","IMPOT MINIMUM FORFAITAIRE / RESULTAT (PERTE)",Math.abs(res),0)}
         <tr style="background:#1A1A1C">
           <td colspan="2" style="padding:10px;font-size:12px;font-weight:700;color:#fff">TOTAL GÉNÉRAL</td>
           <td style="padding:10px;font-size:14px;font-weight:700;color:#FFC400;text-align:right;font-family:monospace">${fmt(totD)}</td>
@@ -3613,14 +3613,14 @@ function exportBalanceExcel(){
       d.tva_coll>d.tva_ded?fmt(d.tva_coll-d.tva_ded):0],
     ["— CLASSE 5 — TRÉSORERIE",null,null,null,null,null],
     ...d.caisses.map(c=>[
-      "5"+{"especes":"71","banque":"12","mobile_money":"14","cheque":"13"}[c.type]||"71",
+      {"especes":"57100000","banque":"52100000","mobile_money":"52100000","cheque":"52100000"}[c.type]||"57100000",
       c.nom,fmt(c.soldeInit+c.deb),fmt(c.cred),
       c.soldeInit+c.deb>=c.cred?fmt(c.soldeInit+c.deb-c.cred):0,
       c.cred>c.soldeInit+c.deb?fmt(c.cred-c.soldeInit-c.deb):0]),
     ["— CLASSE 6 — CHARGES",null,null,null,null,null],
     ...d.charges.map(c=>[c.compte,c.libelle,fmt(c.deb),0,fmt(c.deb),0]),
     ["— CLASSE 7 — PRODUITS",null,null,null,null,null],
-    ["701","Ventes / Prestations",0,fmt(d.produits_cred),0,fmt(d.produits_cred)],
+    ["70110000","VENTE DE MARCHANDISES",0,fmt(d.produits_cred),0,fmt(d.produits_cred)],
     ["— RÉSULTAT",null,null,null,null,null],
     [d.produits_cred-d.totalCharges>=0?"120":"129",
       d.produits_cred-d.totalCharges>=0?"Résultat bénéficiaire":"Résultat déficitaire",
@@ -4189,16 +4189,16 @@ function buildEcritures(){
   DB.factures.forEach(f=>{
     if(new Date(f.date||0).getFullYear()!==y)return;
     const num=f.numero||"";
-    // Débit 411 Clients (TTC)
-    ecr.push({date:f.date,journal:"VE",piece:num,compte:"411",compteLib:"Clients",libelle:clientName(f.clientId),debit:f.montantTTC||0,credit:0});
-    // Crédit 701 Ventes (HT)
-    ecr.push({date:f.date,journal:"VE",piece:num,compte:"701",compteLib:"Ventes / Prestations",libelle:clientName(f.clientId),debit:0,credit:f.montantHT||0});
-    // Crédit 44571 TVA collectée
-    if(f.montantTVA) ecr.push({date:f.date,journal:"VE",piece:num,compte:"44571",compteLib:"TVA collectée",libelle:"TVA "+f.numero,debit:0,credit:f.montantTVA||0});
-    // Paiements reçus → Journal BQ/CA
+    // Débit 41110000 Clients (TTC)
+    ecr.push({date:f.date,journal:"VE",piece:num,compte:"41110000",compteLib:"CLIENTS",libelle:clientName(f.clientId),debit:f.montantTTC||0,credit:0});
+    // Crédit 70110000 Ventes (HT)
+    ecr.push({date:f.date,journal:"VE",piece:num,compte:"70110000",compteLib:"VENTE DE MARCHANDISES",libelle:clientName(f.clientId),debit:0,credit:f.montantHT||0});
+    // Crédit 44310000 TVA facturée
+    if(f.montantTVA) ecr.push({date:f.date,journal:"VE",piece:num,compte:"44310000",compteLib:"TVA FACTUREE SUR VENTE",libelle:"TVA "+f.numero,debit:0,credit:f.montantTVA||0});
+    // Paiements reçus → Journal BQ
     (f.paiements||[]).forEach(p=>{
-      ecr.push({date:p.date,journal:"BQ",piece:num,compte:"512",compteLib:"Banque",libelle:"Encaissement "+num,debit:+p.montant||0,credit:0});
-      ecr.push({date:p.date,journal:"BQ",piece:num,compte:"411",compteLib:"Clients",libelle:"Encaissement "+num,debit:0,credit:+p.montant||0});
+      ecr.push({date:p.date,journal:"BQ",piece:num,compte:"52100000",compteLib:"BANQUE (SGCI)",libelle:"Encaissement "+num,debit:+p.montant||0,credit:0});
+      ecr.push({date:p.date,journal:"BQ",piece:num,compte:"41110000",compteLib:"CLIENTS",libelle:"Encaissement "+num,debit:0,credit:+p.montant||0});
     });
   });
 
@@ -4206,18 +4206,17 @@ function buildEcritures(){
   DB.depenses.forEach(d=>{
     if(new Date(d.date||0).getFullYear()!==y)return;
     const piece=d.numero_piece||"";
-    const compte401="401"; const lib401="Fournisseurs";
-    // Débit 6xx Charges (HT)
+    // Débit 6xxxxxxx Charges (HT) — numéro Sage exact selon catégorie
     const {c6,l6}=catToCompte(d.categorie||"");
     ecr.push({date:d.date,journal:"AC",piece,compte:c6,compteLib:l6,libelle:esc(d.libelle||""),debit:d.ht||0,credit:0});
-    // Débit 44521 TVA déductible
-    if(d.tva) ecr.push({date:d.date,journal:"AC",piece,compte:"44521",compteLib:"TVA déductible",libelle:esc(d.libelle||""),debit:d.tva||0,credit:0});
-    // Crédit 401 Fournisseurs (TTC)
-    ecr.push({date:d.date,journal:"AC",piece,compte:compte401,compteLib:lib401,libelle:esc(d.libelle||""),debit:0,credit:d.ttc||0});
-    // Si payée → solde Fournisseurs
+    // Débit 44520000 TVA récupérable sur achats
+    if(d.tva) ecr.push({date:d.date,journal:"AC",piece,compte:"44520000",compteLib:"TVA RECUPERABLE SUR ACHATS",libelle:esc(d.libelle||""),debit:d.tva||0,credit:0});
+    // Crédit 40110000 Fournisseurs (TTC)
+    ecr.push({date:d.date,journal:"AC",piece,compte:"40110000",compteLib:"FOURNISSEURS",libelle:esc(d.libelle||""),debit:0,credit:d.ttc||0});
+    // Si payée → apurement Fournisseurs
     if(d.statut_paiement==="payee"){
-      ecr.push({date:d.date,journal:"BQ",piece,compte:compte401,compteLib:"Fournisseurs",libelle:"Règlement "+esc(d.libelle||""),debit:d.ttc||0,credit:0});
-      ecr.push({date:d.date,journal:"BQ",piece,compte:"512",compteLib:"Banque",libelle:"Règlement "+esc(d.libelle||""),debit:0,credit:d.ttc||0});
+      ecr.push({date:d.date,journal:"BQ",piece,compte:"40110000",compteLib:"FOURNISSEURS",libelle:"Règlement "+esc(d.libelle||""),debit:d.ttc||0,credit:0});
+      ecr.push({date:d.date,journal:"BQ",piece,compte:"52100000",compteLib:"BANQUE (SGCI)",libelle:"Règlement "+esc(d.libelle||""),debit:0,credit:d.ttc||0});
     }
   });
 
@@ -4231,8 +4230,27 @@ function buildEcritures(){
 }
 
 function catToCompte(cat){
-  const map={"Fournitures":{c:"601",l:"Achats de marchandises"},"Sous-traitance":{c:"604",l:"Sous-traitance"},"Transport":{c:"624",l:"Transport"},"Loyer":{c:"622",l:"Loyers"},"Communication":{c:"626",l:"Télécommunications"},"Frais bancaires":{c:"627",l:"Frais bancaires"},"Équipement":{c:"244",l:"Matériel"},"Salaires":{c:"661",l:"Rémunérations"},"Taxes & impôts":{c:"646",l:"Taxes & impôts"}};
-  const r=map[cat]||{c:"658",l:"Charges diverses"};
+  // Numéros Sage 100 exacts utilisés par Creatis Studio
+  const map={
+    "Fournitures":    {c:"60580000",l:"ACHATS DE TRAVAUX, MATERIAUX ET EMBALLAGES"},
+    "Sous-traitance": {c:"60580000",l:"ACHATS DE TRAVAUX, MATERIAUX ET EMBALLAGES"},
+    "Transport":      {c:"61830000",l:"TRANSPORT ADMINISTRATIF"},
+    "Loyer":          {c:"62220000",l:"LOCATION DE BATIMENT"},
+    "Communication":  {c:"62880000",l:"AUTRES FRAIS DE TELECOMMUNICATION"},
+    "Frais bancaires":{c:"63100000",l:"FRAIS BANCAIRES"},
+    "Équipement":     {c:"60560000",l:"ACHAT DE PETITS MATERIELS ET OUTILLAGE"},
+    "Salaires":       {c:"66110000",l:"APPOINTEMENTS, SALAIRES ET COMMISSIONS"},
+    "Taxes & impôts": {c:"64180000",l:"AUTRES IMPOTS ET TAXES DIRECTS"},
+    "Honoraires":     {c:"63240000",l:"HONORAIRES"},
+    "Entretien":      {c:"62400000",l:"ENTRETIEN, REPARATION ET MAINTENANCE"},
+    "Eau":            {c:"60510000",l:"FOURN. NON STOCK. — EAU"},
+    "Électricité":    {c:"60520000",l:"FOURN. NON STOCK. — ELECTRICITE"},
+    "Assurances":     {c:"62520000",l:"ASSURANCES MATERIELS DE TRANSPORT"},
+    "Réceptions":     {c:"63830000",l:"RECEPTIONS"},
+    "Missions":       {c:"63840000",l:"MISSION"},
+    "Divers":         {c:"63280000",l:"DIVERS FRAIS"},
+  };
+  const r=map[cat]||{c:"63280000",l:"DIVERS FRAIS"};
   return {c6:r.c,l6:r.l};
 }
 
