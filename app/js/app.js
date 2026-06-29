@@ -1757,7 +1757,7 @@ function printDoc(kind,id){
 
 function viewCommandes(){
   if(!vis("commandes"))return;
-  $("#pg-actions").innerHTML=`<button class="btn" onclick="go('infographistes')" style="border-color:var(--cyan);color:var(--cyan)">👥 Tableau infographistes</button><button class="btn" onclick="exportExcel('commandes')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editCmd()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouvelle commande</button>`;
+  $("#pg-actions").innerHTML=`<button class="btn" onclick="exportExcel('commandes')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editCmd()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouvelle commande</button>`;
   if(!DB.commandes.length){$("#view").innerHTML=emptyState("Aucune commande","Créez votre première commande.","Nouvelle commande","editCmd()");return}
   const cols=CMD_FLOW.map(([k,l])=>({k,l,items:DB.commandes.filter(c=>c.statut===k)}));
   $("#view").innerHTML=`<div class="kanban">${cols.map(col=>`
