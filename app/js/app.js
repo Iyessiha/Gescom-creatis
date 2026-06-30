@@ -3220,7 +3220,8 @@ function openBalance(){
       <div class="field" style="margin:0"><label style="font-size:11px">Du</label><input id="bal-from" type="date" value="${y}-01-01" onchange="renderBalance()"></div>
       <div class="field" style="margin:0"><label style="font-size:11px">Au</label><input id="bal-to" type="date" value="${y}-12-31" onchange="renderBalance()"></div>
     </div>
-    <button class="btn btn-sm" onclick="printBalance()">🖨️ Imprimer / PDF</button>
+    <button class="btn btn-sm" onclick="printBalance(4)">🖨️ 4 colonnes</button>
+    <button class="btn btn-sm" onclick="printBalance(6)">🖨️ 6 colonnes</button>
     <button class="btn btn-sm" style="border-color:#1D6F42;color:#1D6F42" onclick="exportBalanceExcel()">📊 Excel</button>
   </div>
   <div id="bal-content" style="max-height:70vh;overflow-y:auto"></div>`,
@@ -3334,23 +3335,22 @@ function renderBalance(){
   const el = document.getElementById("bal-content");
   if(!el) return;
 
-  // Même moteur que l'impression — garantit des chiffres identiques
   const {rows,sumBD,sumBC,sumGD,sumGC,totD,totC} = buildBalanceRowsSage(from,to);
+
+  const td=(v,bold)=>`<td class="r tabnum" style="padding:5px 8px;font-size:11.5px;${bold?"font-weight:700":""}">${v?fmt(v):""}</td>`;
 
   const rowsHTML = rows.map(r=>{
     if(r.type==="subtotal"){
       return`<tr style="background:var(--papier);border-top:1px solid var(--ligne)">
         <td></td>
-        <td style="padding:5px 10px;font-size:11.5px;font-weight:700">${esc(r.lib)}</td>
-        <td class="r tabnum" style="padding:5px 10px;font-size:11.5px;font-weight:700">${fmt(r.d)}</td>
-        <td class="r tabnum" style="padding:5px 10px;font-size:11.5px;font-weight:700">${fmt(r.c)}</td>
+        <td style="padding:5px 8px;font-size:11.5px;font-weight:700">${esc(r.lib)}</td>
+        ${td(r.md,1)}${td(r.mc,1)}${td(r.sd,1)}${td(r.sc,1)}
       </tr>`;
     }
     return`<tr>
-      <td class="tabnum" style="font-size:10.5px;padding:5px 10px;color:var(--txt-2)">${r.compte}</td>
-      <td style="font-size:12px;padding:5px 10px">${esc(r.lib)}</td>
-      <td class="r tabnum" style="font-size:12px;padding:5px 10px">${fmt(r.d)}</td>
-      <td class="r tabnum" style="font-size:12px;padding:5px 10px">${fmt(r.c)}</td>
+      <td class="tabnum" style="font-size:10px;padding:5px 8px;color:var(--txt-2)">${r.compte}</td>
+      <td style="font-size:11.5px;padding:5px 8px">${esc(r.lib)}</td>
+      ${td(r.md)}${td(r.mc)}${td(r.sd)}${td(r.sc)}
     </tr>`;
   }).join("");
 
@@ -3370,31 +3370,40 @@ function renderBalance(){
     <div style="overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;border:1px solid var(--ligne)">
       <thead>
-        <tr style="background:var(--papier)">
-          <th style="padding:7px 10px;font-size:11px;text-align:left;width:90px;border-bottom:2px solid var(--encre)">N° Compte</th>
-          <th style="padding:7px 10px;font-size:11px;text-align:left;border-bottom:2px solid var(--encre)">Intitulé des comptes</th>
-          <th style="padding:7px 10px;font-size:11px;text-align:right;width:130px;border-bottom:2px solid var(--encre)">Débit</th>
-          <th style="padding:7px 10px;font-size:11px;text-align:right;width:130px;border-bottom:2px solid var(--encre)">Crédit</th>
+        <tr>
+          <th rowspan="2" style="padding:6px 8px;font-size:10.5px;text-align:left;width:90px;border-bottom:2px solid var(--encre);vertical-align:bottom">N° Compte</th>
+          <th rowspan="2" style="padding:6px 8px;font-size:10.5px;text-align:left;border-bottom:2px solid var(--encre);vertical-align:bottom">Intitulé des comptes</th>
+          <th colspan="2" style="padding:5px 8px;font-size:10.5px;text-align:center;border-bottom:1px solid var(--ligne)">Mouvements</th>
+          <th colspan="2" style="padding:5px 8px;font-size:10.5px;text-align:center;border-bottom:1px solid var(--ligne)">Soldes</th>
+        </tr>
+        <tr>
+          <th class="r" style="padding:4px 8px;font-size:10.5px;border-bottom:2px solid var(--encre)">Débit</th>
+          <th class="r" style="padding:4px 8px;font-size:10.5px;border-bottom:2px solid var(--encre)">Crédit</th>
+          <th class="r" style="padding:4px 8px;font-size:10.5px;border-bottom:2px solid var(--encre);color:var(--ok)">Débit</th>
+          <th class="r" style="padding:4px 8px;font-size:10.5px;border-bottom:2px solid var(--encre);color:var(--danger)">Crédit</th>
         </tr>
       </thead>
       <tbody>
-        ${rowsHTML || `<tr><td colspan="4" style="padding:14px;text-align:center;color:var(--txt-3)">Aucune écriture sur cette période</td></tr>`}
+        ${rowsHTML || `<tr><td colspan="6" style="padding:14px;text-align:center;color:var(--txt-3)">Aucune écriture sur cette période</td></tr>`}
       </tbody>
       <tfoot>
         <tr style="border-top:2px solid var(--encre)">
-          <td colspan="2" style="padding:6px 10px;font-size:11.5px;font-style:italic;color:var(--txt-2)">Totaux comptes de bilan</td>
-          <td class="r tabnum" style="padding:6px 10px;font-size:11.5px">${fmt(sumBD)}</td>
-          <td class="r tabnum" style="padding:6px 10px;font-size:11.5px">${fmt(sumBC)}</td>
+          <td colspan="2" style="padding:6px 8px;font-size:11.5px;font-style:italic;color:var(--txt-2)">Totaux comptes de bilan</td>
+          <td class="r tabnum" style="padding:6px 8px;font-size:11.5px">${fmt(sumBD)}</td>
+          <td class="r tabnum" style="padding:6px 8px;font-size:11.5px">${fmt(sumBC)}</td>
+          <td colspan="2"></td>
         </tr>
         <tr>
-          <td colspan="2" style="padding:6px 10px;font-size:11.5px;font-style:italic;color:var(--txt-2)">Totaux comptes de gestion</td>
-          <td class="r tabnum" style="padding:6px 10px;font-size:11.5px">${fmt(sumGD)}</td>
-          <td class="r tabnum" style="padding:6px 10px;font-size:11.5px">${fmt(sumGC)}</td>
+          <td colspan="2" style="padding:6px 8px;font-size:11.5px;font-style:italic;color:var(--txt-2)">Totaux comptes de gestion</td>
+          <td class="r tabnum" style="padding:6px 8px;font-size:11.5px">${fmt(sumGD)}</td>
+          <td class="r tabnum" style="padding:6px 8px;font-size:11.5px">${fmt(sumGC)}</td>
+          <td colspan="2"></td>
         </tr>
         <tr style="background:var(--encre);color:#fff">
-          <td colspan="2" style="padding:9px 10px;font-size:12px;font-weight:700">Totaux de la balance</td>
-          <td class="r tabnum" style="padding:9px 10px;font-size:13px;font-weight:700;color:#FFC400">${fmt(totD)}</td>
-          <td class="r tabnum" style="padding:9px 10px;font-size:13px;font-weight:700;color:#FFC400">${fmt(totC)}</td>
+          <td colspan="2" style="padding:9px 8px;font-size:12px;font-weight:700">Totaux de la balance</td>
+          <td class="r tabnum" style="padding:9px 8px;font-size:13px;font-weight:700;color:#FFC400">${fmt(totD)}</td>
+          <td class="r tabnum" style="padding:9px 8px;font-size:13px;font-weight:700;color:#FFC400">${fmt(totC)}</td>
+          <td colspan="2"></td>
         </tr>
       </tfoot>
     </table>
@@ -3408,70 +3417,99 @@ function renderBalance(){
 
 
 function buildBalanceRowsSage(from,to){
-  const all=[...buildEcritures()];
-  (DB.journal||[]).forEach(j=>{
-    const d=new Date(j.date||0);
-    if(d<from||d>to)return;
-    all.push({compte:j.compte_num||j.compte||"",compteLib:j.compte_lib||"",debit:+j.debit||0,credit:+j.credit||0});
-  });
-  const cm={};
-  all.forEach(e=>{
-    const n=e.compte||"";if(!n)return;
-    if(!cm[n])cm[n]={lib:e.compteLib||"",d:0,c:0};
-    cm[n].d+=+e.debit||0;cm[n].c+=+e.credit||0;
-  });
-  // Libellé prioritaire = Plan comptable (casse/intitulé exacts Sage)
-  Object.keys(cm).forEach(n=>{
-    const p=(DB.planCompta||[]).find(x=>x.compte===n);
-    if(p) cm[n].lib=p.libelle;
-  });
-
-  const comptes=Object.entries(cm).filter(([,v])=>v.d||v.c).sort((a,b)=>a[0].localeCompare(b[0]));
-
-  // Sous-totaux par classe 60-68 (réplique exacte du comportement Sage observé)
-  const rows=[]; // {type:'detail'|'subtotal', compte, lib, d, c}
-  const sub3={}; // ex: '601' -> {d,c}
-  const sub2={}; // ex: '60'  -> {d,c}
-  let curPrefix2=null, curPrefix3=null;
-
-  const flush3=(prefix3)=>{
-    if(prefix3 && sub3[prefix3]){
-      rows.push({type:"subtotal",compte:prefix3,lib:"TOTAL "+prefix3,d:sub3[prefix3].d,c:sub3[prefix3].c});
-    }
+  // Sépare : ouverture (AN, antérieure à `from`) vs mouvements de la période
+  const openMap={}, mvtMap={};
+  const addTo=(map,num,lib,d,c)=>{
+    if(!num)return;
+    if(!map[num])map[num]={lib,d:0,c:0};
+    map[num].d+=+d||0; map[num].c+=+c||0;
+    if(lib && !map[num].lib) map[num].lib=lib;
   };
 
-  for(const [num,v] of comptes){
+  // Écritures auto (factures + dépenses)
+  buildEcritures().forEach(e=>{
+    const d=new Date(e.date||0);
+    if(d>=from && d<=to) addTo(mvtMap,e.compte,e.compteLib,e.debit,e.credit);
+  });
+  // Écritures journal (AN + OD manuelles)
+  (DB.journal||[]).forEach(j=>{
+    const d=new Date(j.date||0);
+    const num=j.compte_num||j.compte||"";
+    if(j.journal_code==="AN"){
+      // Toujours traité comme solde d'ouverture, peu importe la date exacte
+      addTo(openMap,num,j.compte_lib,j.debit,j.credit);
+    } else if(d>=from && d<=to){
+      addTo(mvtMap,num,j.compte_lib,j.debit,j.credit);
+    }
+  });
+
+  // Libellés exacts du plan comptable (priorité)
+  const allNums=new Set([...Object.keys(openMap),...Object.keys(mvtMap)]);
+  const libOf=(num)=>{
+    const p=(DB.planCompta||[]).find(x=>x.compte===num);
+    if(p) return p.libelle;
+    return (openMap[num]&&openMap[num].lib) || (mvtMap[num]&&mvtMap[num].lib) || "";
+  };
+
+  const comptes=[...allNums].sort((a,b)=>a.localeCompare(b));
+
+  // Construction des lignes avec sous-totaux classe 6 (601/604/605→60, 61, 62, 63, 64, 66)
+  const rows=[];
+  const sub3={}, sub2={};
+  let curP2=null, curP3=null;
+
+  const acc=(map,p,key)=>{ map[p]=map[p]||{od:0,oc:0,md:0,mc:0}; };
+
+  const flush3=(p3)=>{
+    if(p3 && sub3[p3]) rows.push({type:"subtotal",compte:p3,lib:"TOTAL "+p3,...sub3[p3]});
+  };
+  const flush2=(p2)=>{
+    if(p2 && sub2[p2]) rows.push({type:"subtotal",compte:p2,lib:"TOTAL "+p2,...sub2[p2]});
+  };
+
+  for(const num of comptes){
+    const o=openMap[num]||{d:0,c:0}, m=mvtMap[num]||{d:0,c:0};
+    if(!o.d&&!o.c&&!m.d&&!m.c) continue;
+    const lib=libOf(num);
     const isCharge8 = num.length===8 && num[0]==="6";
+    const line={type:"detail",compte:num,lib,od:o.d,oc:o.c,md:m.d,mc:m.c};
+
     if(isCharge8){
       const p2=num.slice(0,2), p3=num.slice(0,3);
-      if(curPrefix3 && curPrefix3!==p3){ flush3(curPrefix3); }
-      if(curPrefix2 && curPrefix2!==p2){
-        rows.push({type:"subtotal",compte:curPrefix2,lib:"TOTAL "+curPrefix2,d:sub2[curPrefix2].d,c:sub2[curPrefix2].c});
-      }
-      curPrefix2=p2; curPrefix3=p3;
-      sub3[p3]=sub3[p3]||{d:0,c:0}; sub3[p3].d+=v.d; sub3[p3].c+=v.c;
-      sub2[p2]=sub2[p2]||{d:0,c:0}; sub2[p2].d+=v.d; sub2[p2].c+=v.c;
-      rows.push({type:"detail",compte:num,lib:v.lib,d:v.d,c:v.c});
+      if(curP3 && curP3!==p3){ flush3(curP3); }
+      if(curP2 && curP2!==p2){ flush2(curP2); }
+      curP2=p2; curP3=p3;
+      acc(sub3,0,p3); sub3[p3].od+=o.d;sub3[p3].oc+=o.c;sub3[p3].md+=m.d;sub3[p3].mc+=m.c;
+      acc(sub2,0,p2); sub2[p2].od+=o.d;sub2[p2].oc+=o.c;sub2[p2].md+=m.d;sub2[p2].mc+=m.c;
+      rows.push(line);
     } else {
-      if(curPrefix3){ flush3(curPrefix3); curPrefix3=null; }
-      if(curPrefix2){ rows.push({type:"subtotal",compte:curPrefix2,lib:"TOTAL "+curPrefix2,d:sub2[curPrefix2].d,c:sub2[curPrefix2].c}); curPrefix2=null; }
-      rows.push({type:"detail",compte:num,lib:v.lib,d:v.d,c:v.c});
+      if(curP3){ flush3(curP3); curP3=null; }
+      if(curP2){ flush2(curP2); curP2=null; }
+      rows.push(line);
     }
   }
-  if(curPrefix3){ flush3(curPrefix3); }
-  if(curPrefix2){ rows.push({type:"subtotal",compte:curPrefix2,lib:"TOTAL "+curPrefix2,d:sub2[curPrefix2].d,c:sub2[curPrefix2].c}); }
+  if(curP3) flush3(curP3);
+  if(curP2) flush2(curP2);
+
+  // Soldes cumulés (ouverture + mouvements), nets en colonne D ou C unique
+  rows.forEach(r=>{
+    const d=(r.od||0)+(r.md||0), c=(r.oc||0)+(r.mc||0);
+    if(d>=c){ r.sd=d-c; r.sc=0; } else { r.sd=0; r.sc=c-d; }
+  });
 
   const detailRows=rows.filter(r=>r.type==="detail");
   const bilan=detailRows.filter(r=>r.compte[0]<"6");
   const gestion=detailRows.filter(r=>r.compte[0]>="6");
-  const sumBD=bilan.reduce((s,r)=>s+r.d,0), sumBC=bilan.reduce((s,r)=>s+r.c,0);
-  const sumGD=gestion.reduce((s,r)=>s+r.d,0), sumGC=gestion.reduce((s,r)=>s+r.c,0);
+  const sumOf=(arr,k)=>arr.reduce((s,r)=>s+(r[k]||0),0);
+  const sumBD=sumOf(bilan,"md"),   sumBC=sumOf(bilan,"mc");
+  const sumGD=sumOf(gestion,"md"), sumGC=sumOf(gestion,"mc");
   const totD=sumBD+sumGD, totC=sumBC+sumGC;
 
   return {rows, sumBD,sumBC,sumGD,sumGC,totD,totC};
 }
 
-function printBalance(){
+function printBalance(cols){
+  cols = cols===6 ? 6 : 4;
   const {from,to}=getBalancePeriod();
   const co=DB.settings.company||{};
   const fmt=n=>n?Math.round(n).toLocaleString("fr-FR").replace(/\u202f/g," "):"";
@@ -3481,91 +3519,110 @@ function printBalance(){
   };
   const now=new Date();
   const heureT=now.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  const dateOuverture=new Date(from.getTime()-86400000); // veille du début de période (N-1)
 
   const {rows,sumBD,sumBC,sumGD,sumGC,totD,totC}=buildBalanceRowsSage(from,to);
 
+  const td=(v,bold)=>`<td style="padding:3px 5px;text-align:right;font-family:'Courier New',monospace;font-size:9.5px;${bold?"font-weight:700":""}">${v?fmt(v):""}</td>`;
+
   const rowsHTML=rows.map((r)=>{
     if(r.type==="subtotal"){
+      const cells = cols===6
+        ? `<td></td>${td(r.od,1)}${td(r.oc,1)}${td(r.md,1)}${td(r.mc,1)}${td(r.sd,1)}${td(r.sc,1)}`
+        : `<td></td>${td(r.md,1)}${td(r.mc,1)}${td(r.sd,1)}${td(r.sc,1)}`;
       return`<tr style="background:#EFEFEF;border-top:1px solid #999;border-bottom:1px solid #999">
-        <td style="padding:3px 6px;font-size:10px"></td>
-        <td style="padding:3px 6px;font-size:10.5px;font-weight:700">${esc(r.lib)}</td>
-        <td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:10.5px;font-weight:700">${fmt(r.d)}</td>
-        <td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:10.5px;font-weight:700">${fmt(r.c)}</td>
+        <td style="padding:3px 5px;font-size:9.5px"></td>
+        <td style="padding:3px 5px;font-size:9.5px;font-weight:700">${esc(r.lib)}</td>
+        ${cells}
       </tr>`;
     }
-    return`<tr style="border-bottom:1px solid #f0f0f0">
-      <td style="padding:3px 6px;font-family:monospace;font-size:10px;color:#444">${r.compte}</td>
-      <td style="padding:3px 6px;font-size:10.5px">${esc(r.lib)}</td>
-      <td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:10.5px">${fmt(r.d)}</td>
-      <td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:10.5px">${fmt(r.c)}</td>
+    const cells = cols===6
+      ? `${td(r.od)}${td(r.oc)}${td(r.md)}${td(r.mc)}${td(r.sd)}${td(r.sc)}`
+      : `${td(r.md)}${td(r.mc)}${td(r.sd)}${td(r.sc)}`;
+    return`<tr style="border-bottom:1px solid #f2f2f2">
+      <td style="padding:3px 5px;font-family:'Courier New',monospace;font-size:9px;color:#333">${r.compte}</td>
+      <td style="padding:3px 5px;font-size:9.5px">${esc(r.lib)}</td>
+      ${cells}
     </tr>`;
   }).join("");
 
+  // En-têtes de colonnes selon le mode
+  const groupHeader = cols===6
+    ? `<tr>
+        <td rowspan="2" style="width:64px;font-size:9px;font-weight:700;border-bottom:1.5px solid #1A1A1C;padding:2px 5px;vertical-align:bottom">Numéro<br>de<br>compte</td>
+        <td rowspan="2" style="font-size:9px;font-weight:700;border-bottom:1.5px solid #1A1A1C;padding:2px 5px;vertical-align:bottom">Intitulé des comptes</td>
+        <td colspan="2" style="text-align:center;font-size:8.5px;font-weight:700;border-bottom:1px solid #1A1A1C;padding:2px 5px">Mouvements au ${fmtSage(dateOuverture)}</td>
+        <td colspan="2" style="text-align:center;font-size:8.5px;font-weight:700;border-bottom:1px solid #1A1A1C;padding:2px 5px">Mouvements</td>
+        <td colspan="2" style="text-align:center;font-size:8.5px;font-weight:700;border-bottom:1px solid #1A1A1C;padding:2px 5px">Soldes cumulés</td>
+      </tr>
+      <tr>
+        ${["Débit","Crédit","Débit","Crédit","Débit","Crédit"].map(l=>`<td style="width:80px;text-align:right;font-size:9px;font-weight:700;border-bottom:1.5px solid #1A1A1C;padding:2px 5px">${l}</td>`).join("")}
+      </tr>`
+    : `<tr>
+        <td rowspan="2" style="width:80px;font-size:9.5px;font-weight:700;border-bottom:1.5px solid #1A1A1C;padding:3px 5px;vertical-align:bottom">Numéro<br>de compte</td>
+        <td rowspan="2" style="font-size:9.5px;font-weight:700;border-bottom:1.5px solid #1A1A1C;padding:3px 5px;vertical-align:bottom">Intitulé des comptes</td>
+        <td colspan="2" style="text-align:center;font-size:9.5px;font-weight:700;border-bottom:1px solid #1A1A1C;padding:3px 5px">Mouvements</td>
+        <td colspan="2" style="text-align:center;font-size:9.5px;font-weight:700;border-bottom:1px solid #1A1A1C;padding:3px 5px">Soldes</td>
+      </tr>
+      <tr>
+        ${["Débit","Crédit","Débit","Crédit"].map(l=>`<td style="width:115px;text-align:right;font-size:9.5px;font-weight:700;border-bottom:1.5px solid #1A1A1C;padding:2px 5px">${l}</td>`).join("")}
+      </tr>`;
+
+  const colCount = cols===6 ? 8 : 6;
+  const footerCells = (bd,bc)=> cols===6
+    ? `<td colspan="2"></td>${td(0)}${td(0)}<td style="padding:4px 5px;text-align:right;font-family:'Courier New',monospace;font-size:10px">${fmt(bd)}</td><td style="padding:4px 5px;text-align:right;font-family:'Courier New',monospace;font-size:10px">${fmt(bc)}</td>`
+    : `<td style="padding:4px 5px;text-align:right;font-family:'Courier New',monospace;font-size:10px">${fmt(bd)}</td><td style="padding:4px 5px;text-align:right;font-family:'Courier New',monospace;font-size:10px">${fmt(bc)}</td>`;
+
   const html=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
-<title>Balance des comptes — ${fmtSage(from)} au ${fmtSage(to)}</title>
+<title>Balance des comptes (${cols} col.) — ${fmtSage(from)} au ${fmtSage(to)}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:Arial,Helvetica,sans-serif;color:#1A1A1C;background:#e8e8e8;padding:10px}
-.page{width:794px;background:#fff;margin:0 auto;box-shadow:0 2px 12px rgba(0,0,0,.1)}
+.page{width:${cols===6?"1050px":"794px"};background:#fff;margin:0 auto;box-shadow:0 2px 12px rgba(0,0,0,.1)}
 table{width:100%;border-collapse:collapse}
-@media print{body{background:#fff;padding:0}.page{box-shadow:none;width:100%}.no-print{display:none}@page{margin:9mm 8mm;size:A4}}
+@media print{body{background:#fff;padding:0}.page{box-shadow:none;width:100%}.no-print{display:none}@page{margin:8mm 6mm;size:${cols===6?"A4 landscape":"A4"}}}
 </style></head><body>
 <div class="page">
-  <div style="padding:14px 20px 10px">
+  <div style="padding:14px 18px 10px">
 
-    <table style="margin-bottom:4px"><tr>
-      <td style="width:33%;font-size:10px;font-weight:700;vertical-align:top">${esc(co.name||"CREATIS STUDIO")}</td>
-      <td style="width:34%;text-align:center;font-size:13px;font-weight:700;vertical-align:top">Balance des comptes<br><span style="font-size:10px;font-weight:400">Complète</span></td>
-      <td style="width:33%;text-align:right;font-size:10px;vertical-align:top">
-        Période du<br><strong>${fmtSage(from)}</strong><br>au<br><strong>${fmtSage(to)}</strong>
+    <!-- En-tête EXACT Sage 100 i7 -->
+    <table style="margin-bottom:2px"><tr>
+      <td style="width:30%;font-size:10px;font-weight:700;vertical-align:top">${esc(co.name||"CREATIS STUDIO")}</td>
+      <td style="width:40%;text-align:center;font-size:13px;font-weight:700;vertical-align:top">Balance des comptes<br><span style="font-size:10px;font-weight:400">Complète</span></td>
+      <td style="width:30%;text-align:right;font-size:10px;vertical-align:top">
+        Période du <strong>${fmtSage(from)}</strong><br>au <strong>${fmtSage(to)}</strong>
       </td>
     </tr></table>
-
     <div style="text-align:center;font-size:9px;color:#555;margin-bottom:8px">Tenue de compte : FCFA</div>
 
     <table>
-      <thead>
-        <tr>
-          <td style="width:90px;font-size:9.5px;font-weight:700;border-bottom:1.5px solid #1A1A1C;padding:3px 6px">Numéro<br>de compte</td>
-          <td style="font-size:9.5px;font-weight:700;border-bottom:1.5px solid #1A1A1C;padding:3px 6px">Intitulé des comptes</td>
-          <td colspan="2" style="text-align:center;font-size:9.5px;font-weight:700;border-bottom:1.5px solid #1A1A1C;padding:3px 6px">Mouvements</td>
-        </tr>
-        <tr>
-          <td style="border-bottom:1px solid #1A1A1C"></td>
-          <td style="border-bottom:1px solid #1A1A1C"></td>
-          <td style="width:115px;text-align:right;font-size:9.5px;font-weight:700;border-bottom:1px solid #1A1A1C;padding:2px 6px">Débit</td>
-          <td style="width:115px;text-align:right;font-size:9.5px;font-weight:700;border-bottom:1px solid #1A1A1C;padding:2px 6px">Crédit</td>
-        </tr>
-      </thead>
+      <thead>${groupHeader}</thead>
       <tbody>${rowsHTML}</tbody>
       <tfoot>
         <tr style="border-top:2px solid #1A1A1C">
-          <td colspan="2" style="padding:4px 6px;font-size:10.5px;font-style:italic">Totaux comptes de bilan</td>
-          <td style="padding:4px 6px;text-align:right;font-family:monospace;font-size:10.5px">${fmt(sumBD)}</td>
-          <td style="padding:4px 6px;text-align:right;font-family:monospace;font-size:10.5px">${fmt(sumBC)}</td>
+          <td colspan="2" style="padding:4px 5px;font-size:10px;font-style:italic">Totaux comptes de bilan</td>
+          ${footerCells(sumBD,sumBC)}
         </tr>
         <tr>
-          <td colspan="2" style="padding:4px 6px;font-size:10.5px;font-style:italic">Totaux comptes de gestion</td>
-          <td style="padding:4px 6px;text-align:right;font-family:monospace;font-size:10.5px">${fmt(sumGD)}</td>
-          <td style="padding:4px 6px;text-align:right;font-family:monospace;font-size:10.5px">${fmt(sumGC)}</td>
+          <td colspan="2" style="padding:4px 5px;font-size:10px;font-style:italic">Totaux comptes de gestion</td>
+          ${footerCells(sumGD,sumGC)}
         </tr>
         <tr style="border-top:1.5px solid #1A1A1C">
-          <td colspan="2" style="padding:5px 6px;font-size:11px;font-weight:700">Totaux de la balance</td>
-          <td style="padding:5px 6px;text-align:right;font-family:monospace;font-size:11px;font-weight:700">${fmt(totD)}</td>
-          <td style="padding:5px 6px;text-align:right;font-family:monospace;font-size:11px;font-weight:700">${fmt(totC)}</td>
+          <td colspan="2" style="padding:5px 5px;font-size:10.5px;font-weight:700">Totaux de la balance</td>
+          ${cols===6?`<td colspan="2"></td><td colspan="2"></td>`:""}
+          <td style="padding:5px 5px;text-align:right;font-family:'Courier New',monospace;font-size:10.5px;font-weight:700">${fmt(totD)}</td>
+          <td style="padding:5px 5px;text-align:right;font-family:'Courier New',monospace;font-size:10.5px;font-weight:700">${fmt(totC)}</td>
         </tr>
       </tfoot>
     </table>
 
-    <div style="margin-top:10px;font-size:9px;color:${totD===totC?"#137f4f":"#E0444E"};font-weight:700;text-align:center">
+    <div style="margin-top:8px;font-size:9px;color:${totD===totC?"#137f4f":"#E0444E"};font-weight:700;text-align:center">
       ${totD===totC?"✓ Balance équilibrée — Débit = Crédit":"⚠ Écart : "+fmt(Math.abs(totD-totC))+" F CFA"}
     </div>
 
-    <div style="margin-top:14px;padding-top:6px;border-top:1px solid #ccc;font-size:8.5px;color:#777">
-      Tenue de compte : FCFA &nbsp;&nbsp;&nbsp;
-      © Gescom-Creatis — compatible Sage 100 Comptabilité i7 &nbsp;&nbsp;&nbsp;
-      Date de tirage ${fmtSage(now)} à ${heureT} &nbsp;&nbsp;&nbsp;
-      Page : 1
+    <div style="margin-top:12px;padding-top:6px;border-top:1px solid #ccc;font-size:8.5px;color:#777;text-align:center">
+      Tenue de compte : FCFA &nbsp;·&nbsp; © Gescom-Creatis — compatible Sage 100 Comptabilité i7 8.50
+      &nbsp;·&nbsp; Date de tirage ${fmtSage(now)} à ${heureT} &nbsp;·&nbsp; Page : 1
     </div>
   </div>
 </div>
@@ -3574,9 +3631,10 @@ table{width:100%;border-collapse:collapse}
   <button onclick="window.close()" style="padding:11px 18px;background:#fff;color:#1A1A1C;border:1.5px solid #ddd;border-radius:30px;font-size:13px;cursor:pointer">✕ Fermer</button>
 </div>
 </body></html>`;
-  const w=window.open("","_blank","width=900,height=740");
+  const w=window.open("","_blank","width=1000,height=740");
   w.document.write(html);w.document.close();
 }
+
 
 function exportBalanceExcel(){
   const {from,to} = getBalancePeriod();
