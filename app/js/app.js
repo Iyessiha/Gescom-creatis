@@ -183,7 +183,7 @@ function defaultSettings(){
   return {company:defaultCompany(),tva:18,devise:"F CFA",year:new Date().getFullYear(),seqDevis:1,seqFacture:1,seqCommande:1};
 }
 function defaultRoles(){
-  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","depenses","crh","entrepot","caisses","parametres"].forEach(m=>full[m]="edit");
+  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","depenses","crh","entrepot","caisses","infographistes","parametres"].forEach(m=>full[m]="edit");
   const mk=(map)=>{const o={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","depenses","crh","entrepot","caisses","parametres"].forEach(m=>o[m]=map[m]||"none");return o};
   return [
     {id:"administrateur",name:"Administrateur",system:true,color:"noir",perms:full,widgets:["kpi_encaisse","kpi_reste","kpi_devis","kpi_leads","chart_ca","pipe_devis","list_relance","list_echeances"]},
@@ -264,7 +264,8 @@ const MODS=[
   {k:"depenses",label:"Dépenses"},
   {k:"crh",label:"RH / Employés"},
   {k:"entrepot",label:"Entrepôt"},
-  {k:"caisses",label:"Caisses"}
+  {k:"caisses",label:"Caisses"},
+  {k:"infographistes",label:"Infographistes"}
 ];
 const WIDGETS=[
   {k:"kpi_encaisse",label:"Encaissé (mois/année)"},{k:"kpi_reste",label:"Reste à encaisser"},
@@ -1180,6 +1181,7 @@ const ROUTES={
   crh:{t:"Ressources Humaines",render:viewCrh},
   entrepot:{t:"Entrepôt & Stock",render:viewEntrepot},
   caisses:{t:"Caisses & Trésorerie",render:viewCaisses},
+  infographistes:{t:"Suivi infographistes",render:viewInfographistes},
 };
 function go(route){
   if(!USER)return;
@@ -1260,7 +1262,7 @@ function viewDashboard(){
    ============================================================ */
 function viewClients(){
   if(!vis("clients"))return;
-  $("#pg-actions").innerHTML=`<button class="btn" onclick="exportExcel('clients')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editClient()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouveau contact</button>`;
+  $("#pg-actions").innerHTML=`<input id="srch-clients" placeholder="🔍 Rechercher..." oninput="renderClientList()" style="padding:8px 12px;border:1.5px solid var(--ligne);border-radius:8px;background:var(--carte);color:var(--txt-1);width:200px;font-size:13px"><select id="fil-client-type" onchange="renderClientList()" style="padding:8px;border:1.5px solid var(--ligne);border-radius:8px;background:var(--carte);color:var(--txt-1);font-size:13px"><option value="">Tous</option><option value="client">Clients</option><option value="prospect">Prospects</option></select><button class="btn" onclick="exportExcel('clients')" style="border-color:#1D6F42;color:#1D6F42">📊 Excel</button><button class="btn btn-primary act-edit" onclick="editClient()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouveau contact</button>`;
   const segs=["PME","Start-up","Collectivité","Grand compte"];const sources=["Bouche-à-oreille","LinkedIn","Salon/événement","Webinaire","Appel d'offres","Site web","Autre"];
   const q=(clientSearch||"").toLowerCase();
   const list=DB.clients.filter(c=>!q||c.nom.toLowerCase().includes(q)||(c.contact||"").toLowerCase().includes(q)||(c.email||"").toLowerCase().includes(q));
@@ -1281,7 +1283,7 @@ function openClient(id){
   const devis=DB.devis.filter(d=>d.clientId===id);
   const factures=DB.factures.filter(f=>f.clientId===id);
   drawer(c.nom,c.contact||"",
-    kv("Type",pill(c.type))+kv("Segment",c.segment)+kv("Téléphone",c.tel)+kv("Email",c.email)+kv("Adresse",c.adresse)+kv("Source",c.source)+kv("Notes",c.notes)+
+    kv("Type",pill(c.type))+kv("Segment",c.segment)+kv("Téléphone",c.tel)+kv("Email",c.email)+(c.ncc?kv("NCC",c.ncc):"")+kv("Régime",c.regime||"—")+kv("Adresse",c.adresse)+kv("Source",c.source)+kv("Notes",c.notes)+
     (devis.length?`<div class="fieldset" style="margin-top:16px"><div class="fs-t">Devis</div>${devis.slice(0,3).map(d=>`<div style="display:flex;justify-content:space-between;padding:4px 0"><span>${esc(d.numero)}</span><span>${pill(d.statut)}</span></div>`).join("")}</div>`:"")+
     (factures.length?`<div class="fieldset" style="margin-top:12px"><div class="fs-t">Factures</div>${factures.slice(0,3).map(f=>`<div style="display:flex;justify-content:space-between;padding:4px 0"><span>${esc(f.numero)}</span><span>${pill(factStatut(f))}</span></div>`).join("")}</div>`:""),
     [c.type==="prospect"?{label:"Convertir en client",cls:"btn-mag",edit:1,fn:`convertClient('${id}')`}:null,{label:"Modifier",cls:"btn-primary",edit:1,fn:`closeOverlays();editClient('${id}')`}].filter(Boolean)
@@ -1303,6 +1305,10 @@ function editClient(id){
       <div class="field"><label>Téléphone</label><input name="tel" value="${esc(c.tel||"")}"></div>
       <div class="field"><label>Email</label><input name="email" type="email" value="${esc(c.email||"")}"></div>
     </div>
+    <div class="row2">
+      <div class="field"><label>NCC / IFU (DGI)</label><input name="ncc" placeholder="ex: 6104401U" value="${esc(c.ncc||"")}"></div>
+      <div class="field"><label>Régime fiscal</label><select name="regime"><option value="">—</option>${["RSI","RNI","RSIMF","Exonéré"].map(r=>`<option value="${r}" ${(c.regime||"")==r?"selected":""}>${r}</option>`).join("")}</select></div>
+    </div>
     <div class="field"><label>Adresse</label><input name="adresse" value="${esc(c.adresse||"")}"></div>
     <div class="field"><label>Source</label><select name="source">${sources.map(s=>`<option ${c.source===s?"selected":""}>${s}</option>`).join("")}</select></div>
     <div class="field"><label>Notes</label><textarea name="notes">${esc(c.notes||"")}</textarea></div>
@@ -1314,8 +1320,8 @@ function saveClient(id){
   if(!guard("clients"))return;
   const f=$("#f-client");const fd=new FormData(f);
   const nom=fd.get("nom")||"";if(!nom.trim()){toast("Nom obligatoire");return}
-  if(id){const c=DB.clients.find(x=>x.id===id);Object.assign(c,{nom:nom.trim(),contact:fd.get("contact"),segment:fd.get("segment"),type:fd.get("type"),tel:fd.get("tel"),email:fd.get("email"),adresse:fd.get("adresse"),source:fd.get("source"),notes:fd.get("notes")});sync("clients",c);}
-  else{const c={id:uid(),nom:nom.trim(),contact:fd.get("contact"),segment:fd.get("segment"),type:fd.get("type"),tel:fd.get("tel"),email:fd.get("email"),adresse:fd.get("adresse"),source:fd.get("source"),notes:fd.get("notes"),createdAt:Date.now()};DB.clients.push(c);sync("clients",c);}
+  if(id){const c=DB.clients.find(x=>x.id===id);Object.assign(c,{nom:nom.trim(),contact:fd.get("contact"),segment:fd.get("segment"),type:fd.get("type"),tel:fd.get("tel"),email:fd.get("email"),adresse:fd.get("adresse"),source:fd.get("source"),notes:fd.get("notes"),ncc:fd.get("ncc")||"",regime:fd.get("regime")||""});sync("clients",c);}
+  else{const c={id:uid(),nom:nom.trim(),contact:fd.get("contact"),segment:fd.get("segment"),type:fd.get("type"),tel:fd.get("tel"),email:fd.get("email"),adresse:fd.get("adresse"),source:fd.get("source"),notes:fd.get("notes"),ncc:fd.get("ncc")||"",regime:fd.get("regime")||"",createdAt:Date.now()};DB.clients.push(c);sync("clients",c);}
   closeOverlays();toast(id?"Contact mis à jour":"Contact créé");refreshBadges();go(current);
 }
 function delClient(id){if(!guard("clients"))return;confirmModal("Supprimer ce contact ?","Les devis et factures liés ne seront pas supprimés.",()=>{DB.clients=DB.clients.filter(x=>x.id!==id);syncDel("clients",id);closeOverlays();toast("Contact supprimé");refreshBadges();go("clients")})}
@@ -2236,7 +2242,13 @@ document.querySelectorAll("#nav a").forEach(a=>a.addEventListener("click",()=>go
 /* ============================================================
    BOOT ASYNC
    ============================================================ */
-(async function boot(){
+let _pwaPrompt=null;
+window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();_pwaPrompt=e;const b=document.getElementById("pwa-install-btn");if(b)b.style.display="flex";});
+function installPWA(){
+  if(_pwaPrompt){_pwaPrompt.prompt();_pwaPrompt.userChoice.then(r=>{if(r.outcome==="accepted")toast("✅ Application installée !");_pwaPrompt=null;const b=document.getElementById("pwa-install-btn");if(b)b.style.display="none";});}
+  else toast("Installez via le menu de votre navigateur (⋮ → Ajouter à l'écran d'accueil)");
+}
+async function boot(){
   // Vérifier si les clés Supabase sont des placeholders
   const keysOk = typeof SUPABASE_URL !== "undefined" &&
                  !SUPABASE_URL.includes("VOTRE-ID") &&
@@ -2269,7 +2281,8 @@ document.querySelectorAll("#nav a").forEach(a=>a.addEventListener("click",()=>go
   } catch(e){}
   if(sessionUser){ enterApp(sessionUser); }
   else { renderAuth(); }
-})();
+}
+boot();
 /* ============================================================
    FOURNISSEURS
    ============================================================ */
@@ -2278,40 +2291,15 @@ function fournisseurName(id){ const f=DB.fournisseurs.find(x=>x.id===id); return
 function viewFournisseurs(){
   if(!vis("fournisseurs"))return;
   $("#pg-actions").innerHTML=`
+    <input id="srch-fournisseurs" placeholder="🔍 Rechercher..." oninput="renderFournisseurList()" style="padding:8px 12px;border:1.5px solid var(--ligne);border-radius:8px;background:var(--carte);color:var(--txt-1);width:200px;font-size:13px">
     <button class="btn" onclick="exportExcel('fournisseurs')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button>
     <button class="btn btn-primary act-edit" onclick="editFournisseur()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouveau fournisseur</button>`;
-
-  if(!DB.fournisseurs.length){
-    $("#view").innerHTML=emptyState("Aucun fournisseur","Ajoutez vos fournisseurs habituels.","Nouveau fournisseur","editFournisseur()");return;
-  }
-  const actifs=DB.fournisseurs.filter(f=>f.actif!==false);
-  const inactifs=DB.fournisseurs.filter(f=>f.actif===false);
-  $("#view").innerHTML=`
-  <div class="grid kpis" style="margin-bottom:16px">
-    <div class="card kpi c-cyan"><span class="tick"></span><div class="lab">Fournisseurs actifs</div><div class="val tabnum">${actifs.length}</div></div>
-    <div class="card kpi c-mag"><span class="tick"></span><div class="lab">Dépenses liées</div><div class="val tabnum">${fcfa(DB.depenses.filter(d=>d.fournisseurId).reduce((s,d)=>s+(+d.ttc||0),0))}</div></div>
-    <div class="card kpi c-jaune"><span class="tick"></span><div class="lab">Secteurs</div><div class="val tabnum">${new Set(DB.fournisseurs.map(f=>f.secteur||"Autre")).size}</div></div>
-    <div class="card kpi c-noir"><span class="tick"></span><div class="lab">Fournisseurs inactifs</div><div class="val tabnum">${inactifs.length}</div></div>
-  </div>
-  <div class="card" style="overflow-x:auto"><table><thead><tr>
-    <th>Nom</th><th>Contact</th><th>Secteur</th><th>Téléphone</th><th>Email</th>
-    <th>Conditions</th><th>Dépenses</th><th>Statut</th><th></th>
-  </tr></thead><tbody>
-  ${DB.fournisseurs.map(f=>{
-    const depF=DB.depenses.filter(d=>(d.fournisseurId||d.fournisseur_id)===f.id).reduce((s,d)=>s+(+d.ttc||0),0);
-    return`<tr class="clk" onclick="openFournisseur('${f.id}')">
-      <td><div class="nm">${esc(f.nom)}</div><div class="meta">${esc(f.numeroContribuable||f.numero_contribuable||"")}</div></td>
-      <td class="meta">${esc(f.contact||"—")}</td>
-      <td><span class="seg">${esc(f.secteur||"—")}</span></td>
-      <td class="meta">${esc(f.tel||"—")}</td>
-      <td class="meta">${esc(f.email||"—")}</td>
-      <td class="meta">${esc(f.conditionsPaiement||f.conditions_paiement||"—")}</td>
-      <td class="r tabnum">${depF?fcfa(depF):"—"}</td>
-      <td>${f.actif!==false?'<span class="pill p-green"><span class="dot"></span>Actif</span>':'<span class="pill p-grey"><span class="dot"></span>Inactif</span>'}</td>
-      <td class="r" onclick="event.stopPropagation()"><button class="btn btn-sm btn-ghost act-edit" onclick="editFournisseur('${f.id}')">Modifier</button></td>
-    </tr>`;
-  }).join("")}
-  </tbody></table></div>`;
+  renderFournisseurList();
+}
+function renderFournisseurList(){
+  if(!vis("fournisseurs"))return;
+  const q=(document.getElementById("srch-fournisseurs")?.value||"").toLowerCase();
+  renderFournisseurList();
 }
 
 function openFournisseur(id){
@@ -4326,13 +4314,13 @@ function renderGrandLivre(el){
     .sort((a,b)=>a.compte.localeCompare(b.compte))
     .map(p=>`<option value="${p.compte}">${p.compte} — ${p.libelle}</option>`).join("");
 
-  const filtCompte=el.querySelector?.("select#fil-gl-compte")?.value||"";
+  const filtCompte=window._glCompte||"";
 
   el.innerHTML=`
   <div class="card panel">
     <div class="panel-h">
       <h3>Grand Livre</h3><div class="spacer"></div>
-      <select id="fil-gl-compte" onchange="renderComptaTab()" style="width:280px">
+      <select id="fil-gl-compte" onchange="window._glCompte=this.value;renderComptaTab()" style="width:280px">
         <option value="">Tous les comptes</option>${planOpts}
       </select>
     </div>
@@ -4528,4 +4516,55 @@ async function saveEcritureOD(){
   toast(`✅ Écriture ${jnl} enregistrée`);
   closeOverlays();
   go("compta");
+}
+
+/* ============================================================
+   FIXES & AMÉLIORATIONS UX — Audit 30/06/2026
+   ============================================================ */
+
+// ── UX 3 : Catalogue — filtre par catégorie ──────────────────
+// (patch viewCatalogue pour ajouter recherche live)
+const _origViewCatalogue = viewCatalogue;
+
+function dashAlerts(){
+  const now = new Date();
+  const alerts = [];
+  // Factures en retard
+  DB.factures.filter(f=>{
+    const due = new Date(f.echeance||0);
+    return f.statut!=="payée" && due < now && f.montantTTC > 0;
+  }).forEach(f=>{
+    const days = Math.floor((now-new Date(f.echeance))/86400000);
+    alerts.push({type:"danger", msg:`Facture ${f.numero} — ${clientName(f.clientId)} en retard de ${days}j (${fcfa(f.montantTTC-factPaid(f))} restant)`});
+  });
+  // Commandes en retard
+  DB.commandes.filter(c=>c.deadline&&new Date(c.deadline)<now&&c.statut!=="livré"&&c.statut!=="facturé")
+    .forEach(c=>{
+      alerts.push({type:"warn", msg:`Commande ${c.numero} — ${esc(c.titre)} deadline dépassée`});
+    });
+  // Stock faible
+  (DB.products||[]).filter(p=>p.stock_actuel!==undefined&&p.stock_actuel<=p.stock_min).forEach(p=>{
+    alerts.push({type:"warn", msg:`Stock faible : ${esc(p.nom)} (${p.stock_actuel} restant, seuil ${p.stock_min})`});
+  });
+  return alerts;
+}
+
+// Injecter les alertes dans le dashboard si la section existe
+const _origViewDashboard = viewDashboard;
+
+function renderClientList(){
+  _origRenderClientList();
+  // Ajouter le filtre type client si le select existe
+  const filType = document.getElementById("fil-client-type");
+  if(!filType) return;
+  const q = (document.getElementById("srch-clients")?.value||"").toLowerCase();
+  const t = filType.value;
+  if(!q && !t) return;
+  document.querySelectorAll("#client-list tbody tr, #view tbody tr").forEach(tr=>{
+    const text = tr.textContent.toLowerCase();
+    const typeCell = tr.dataset.type||"";
+    const matchQ = !q || text.includes(q);
+    const matchT = !t || typeCell === t;
+    tr.style.display = (matchQ && matchT) ? "" : "none";
+  });
 }
