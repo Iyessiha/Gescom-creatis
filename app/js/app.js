@@ -113,7 +113,9 @@ async function loadAll(){
   const [settingsRow, rolesRows, usersRows, clientsRows, productsRows,
          fournisseursRows, devisRows, facturesRows, commandesRows, depensesRows,
          employesRows, congesRows,
-         stockMvtRows, caissesRows, caisseMvtRows] = await Promise.all([
+         stockMvtRows, caissesRows, caisseMvtRows,
+         planComptaRows, journalRows,
+         prodEtapesRows, prodActiviteRows] = await Promise.all([
     dbFetchOne("app_settings"),
     dbFetch("crm_roles","created_at"),
     dbFetch("crm_users","created_at"),
@@ -129,6 +131,10 @@ async function loadAll(){
     dbFetch("crm_stock_mouvements","date"),
     dbFetch("crm_caisses","created_at"),
     dbFetch("crm_caisse_mvt","date"),
+    dbFetch("crm_plan_comptable","compte"),
+    dbFetch("journal_entries","date"),
+    dbFetch("crm_prod_etapes","created_at"),
+    dbFetch("crm_prod_activite","created_at"),
   ]);
 
   // Settings — reconstruire au format attendu par l'app
@@ -171,6 +177,10 @@ async function loadAll(){
   DB.stockMvt    = stockMvtRows;
   DB.caisses     = caissesRows;
   DB.caisseMvt   = caisseMvtRows;
+  DB.planCompta   = planComptaRows;
+  DB.journal      = journalRows;
+  DB.prodEtapes   = prodEtapesRows;
+  DB.prodActivite = prodActiviteRows;
 }
 
 /* ============================================================
@@ -4566,5 +4576,562 @@ function renderClientList(){
     const matchQ = !q || text.includes(q);
     const matchT = !t || typeCell === t;
     tr.style.display = (matchQ && matchT) ? "" : "none";
+  });
+}
+
+/* ============================================================
+   ATELIER & PRODUCTION — Module complet
+   Suivi des commandes de la création à la livraison
+   ============================================================ */
+
+const PROD_ETAPES = [
+  {k:"brief",         label:"Brief",        icon:"📋", color:"var(--txt-2)"},
+  {k:"creation",      label:"Création",     icon:"🎨", color:"var(--mag)"},
+  {k:"bat_envoye",    label:"BAT envoyé",   icon:"📤", color:"var(--jaune)"},
+  {k:"revision",      label:"Révisions",    icon:"🔄", color:"#E67E22"},
+  {k:"bat_approuve",  label:"BAT approuvé", icon:"✅", color:"var(--ok)"},
+  {k:"impression",    label:"Impression",   icon:"🖨️", color:"var(--cyan)"},
+  {k:"finition",      label:"Finition",     icon:"✂️", color:"#9B59B6"},
+  {k:"livraison",     label:"Livraison",    icon:"🚚", color:"var(--ok)"},
+];
+
+const PROD_STATUTS = {
+  en_attente: {label:"En attente", color:"var(--txt-3)", bg:"var(--ligne)"},
+  en_cours:   {label:"En cours",   color:"var(--cyan)",  bg:"var(--cyan)18"},
+  termine:    {label:"Terminé",    color:"var(--ok)",    bg:"var(--ok)18"},
+  bloque:     {label:"Bloqué",     color:"var(--danger)",bg:"var(--danger)18"},
+};
+
+const PROD_ROLES = ["infographiste","imprimeur","finition","contrôleur","livreur","polyvalent"];
+
+function prodEtapeLabel(k){ return PROD_ETAPES.find(e=>e.k===k)?.label||k; }
+function prodEtapeIcon(k){  return PROD_ETAPES.find(e=>e.k===k)?.icon||"⚙️"; }
+function prodEtapeColor(k){ return PROD_ETAPES.find(e=>e.k===k)?.color||"var(--txt-2)"; }
+function prodStatutBadge(st){
+  const s=PROD_STATUTS[st]||{label:st,color:"var(--txt-2)",bg:"var(--ligne)"};
+  return`<span style="padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;color:${s.color};background:${s.bg}">${s.label}</span>`;
+}
+
+// ── viewProduction ── vue principale ────────────────────────────
+function viewProduction(){
+  if(!vis("production"))return;
+  window._prodTab = window._prodTab||"kanban";
+  window._prodFiltEtape = window._prodFiltEtape||"";
+  window._prodFiltOp    = window._prodFiltOp||"";
+
+  const now = new Date();
+  const actives = (DB.commandes||[]).filter(c=>c.statut!=="livré"&&c.statut!=="facturé");
+  const retard  = actives.filter(c=>c.deadline&&new Date(c.deadline)<now);
+  const sansEtape = actives.filter(c=>!(DB.prodEtapes||[]).some(e=>e.commande_id===c.id));
+
+  // Compter les étapes actives
+  const etapesEnCours = (DB.prodEtapes||[]).filter(e=>e.statut==="en_cours").length;
+  const etapesBloquees = (DB.prodEtapes||[]).filter(e=>e.statut==="bloque").length;
+
+  $("#pg-title").textContent = "Atelier & Production";
+  $("#pg-sub").textContent   = `${actives.length} commande(s) en cours · ${etapesEnCours} étape(s) active(s)`;
+  $("#pg-actions").innerHTML = `
+    <button class="btn" onclick="openNouvelleEtape()" style="border-color:var(--cyan);color:var(--cyan)">➕ Nouvelle étape</button>
+    ${wr("production")?`<button class="btn btn-primary" onclick="initEtapesCommande()">⚡ Init. production</button>`:""}`;
+
+  const tabs=[
+    {k:"kanban",label:"🏭 Kanban atelier"},
+    {k:"operateurs",label:"👥 Par opérateur"},
+    {k:"commandes",label:"📋 Par commande"},
+    {k:"activite",label:"📰 Journal activité"},
+  ];
+
+  $("#view").innerHTML=`
+  <!-- KPIs -->
+  <div class="grid kpis" style="margin-bottom:14px">
+    <div class="card kpi c-cyan"><span class="tick"></span>
+      <div class="lab">En production</div>
+      <div class="val">${actives.length}</div>
+      <div class="delta">${etapesEnCours} étapes en cours</div></div>
+    <div class="card kpi ${retard.length?"c-rouge":"c-noir"}"><span class="tick"></span>
+      <div class="lab">En retard</div>
+      <div class="val" style="color:${retard.length?"var(--danger)":"inherit"}">${retard.length}</div>
+      <div class="delta">Deadline dépassée</div></div>
+    <div class="card kpi ${etapesBloquees?"c-rouge":"c-noir"}"><span class="tick"></span>
+      <div class="lab">Bloquées</div>
+      <div class="val" style="color:${etapesBloquees?"var(--danger)":"inherit"}">${etapesBloquees}</div>
+      <div class="delta">Nécessitent action</div></div>
+    <div class="card kpi ${sansEtape.length?"c-jaune":"c-noir"}"><span class="tick"></span>
+      <div class="lab">Sans étape</div>
+      <div class="val" style="color:${sansEtape.length?"var(--warn)":"inherit"}">${sansEtape.length}</div>
+      <div class="delta">À initialiser</div></div>
+  </div>
+
+  <!-- Onglets -->
+  <div style="display:flex;gap:2px;border-bottom:2px solid var(--ligne);margin-bottom:0">
+    ${tabs.map(t=>`<button onclick="switchProdTab('${t.k}')" id="ptab-${t.k}"
+      style="padding:8px 16px;border:none;border-radius:6px 6px 0 0;cursor:pointer;font-size:12px;font-weight:600;
+      background:${window._prodTab===t.k?"var(--carte)":"transparent"};
+      color:${window._prodTab===t.k?"var(--cyan)":"var(--txt-2)"};
+      border-bottom:${window._prodTab===t.k?"3px solid var(--cyan)":"3px solid transparent"};
+      margin-bottom:-2px">${t.l}</button>`).join("")}
+  </div>
+  <div id="prod-tab-content" style="padding-top:14px"></div>`;
+
+  renderProdTab();
+}
+
+function switchProdTab(tab){
+  window._prodTab=tab;
+  document.querySelectorAll("[id^='ptab-']").forEach(b=>{
+    const k=b.id.replace("ptab-",""), a=k===tab;
+    b.style.background=a?"var(--carte)":"transparent";
+    b.style.color=a?"var(--cyan)":"var(--txt-2)";
+    b.style.borderBottom=a?"3px solid var(--cyan)":"3px solid transparent";
+  });
+  renderProdTab();
+}
+
+function renderProdTab(){
+  const el=document.getElementById("prod-tab-content"); if(!el)return;
+  const t=window._prodTab||"kanban";
+  if(t==="kanban")      renderProdKanban(el);
+  else if(t==="operateurs") renderProdOperateurs(el);
+  else if(t==="commandes")  renderProdCommandes(el);
+  else if(t==="activite")   renderProdActivite(el);
+}
+
+// ── Onglet 1 : Kanban par étape ──────────────────────────────────
+function renderProdKanban(el){
+  const now = new Date();
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR");
+
+  el.innerHTML=`
+  <div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:8px">
+  ${PROD_ETAPES.map(et=>{
+    const etapes = (DB.prodEtapes||[]).filter(e=>e.etape===et.k);
+    const enCours = etapes.filter(e=>e.statut==="en_cours");
+    const bloque  = etapes.filter(e=>e.statut==="bloque");
+    const termine = etapes.filter(e=>e.statut==="termine");
+
+    return`
+    <div style="min-width:220px;max-width:240px;flex-shrink:0">
+      <!-- En-tête colonne -->
+      <div style="padding:8px 10px;border-radius:8px 8px 0 0;background:var(--papier);border:1px solid var(--ligne);border-bottom:2px solid ${et.color};margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;font-weight:700;color:${et.color}">${et.icon} ${et.label}</span>
+        <span style="font-size:10px;padding:2px 8px;background:${et.color}18;color:${et.color};border-radius:10px;font-weight:700">${etapes.length}</span>
+      </div>
+      <!-- Cartes -->
+      <div style="display:flex;flex-direction:column;gap:6px;min-height:60px">
+        ${etapes.length===0?`<div style="padding:12px;text-align:center;color:var(--txt-3);font-size:11px;border:1px dashed var(--ligne);border-radius:6px">Aucune</div>`:""}
+        ${etapes.map(e=>{
+          const cmd=(DB.commandes||[]).find(c=>c.id===e.commande_id)||{};
+          const op=(DB.users||[]).find(u=>u.id===e.operateur_id);
+          const isLate=e.date_fin_prev&&new Date(e.date_fin_prev)<now&&e.statut!=="termine";
+          return`<div onclick="openProdEtape('${e.id}')" style="padding:10px 12px;background:var(--carte);border:1px solid var(--ligne);border-radius:8px;cursor:pointer;${isLate?"border-left:3px solid var(--danger)":""};${e.statut==="bloque"?"border-left:3px solid var(--danger)":""};${e.statut==="termine"?"opacity:.7":""}">
+            <div style="font-size:11px;font-weight:700;color:var(--txt-1);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(cmd.numero||"")} ${esc(cmd.titre||"")}</div>
+            <div style="font-size:10px;color:var(--txt-2);margin-bottom:5px">${esc(clientName(cmd.clientId))}</div>
+            ${op?`<div style="font-size:10px;color:var(--cyan);font-weight:600">👤 ${esc(op.name)}</div>`:""}
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px">
+              ${prodStatutBadge(e.statut)}
+              ${isLate?`<span style="font-size:9px;color:var(--danger);font-weight:700">⚠️ Retard</span>`:""}
+              ${e.date_fin_prev&&e.statut!=="termine"?`<span style="font-size:9px;color:var(--txt-2)">${new Date(e.date_fin_prev).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit"})}</span>`:""}
+            </div>
+          </div>`;
+        }).join("")}
+        ${wr("production")?`<button onclick="openNouvelleEtape('${et.k}')" style="padding:6px;border:1px dashed var(--ligne);border-radius:6px;background:transparent;cursor:pointer;font-size:11px;color:var(--txt-2);width:100%">+ Ajouter</button>`:""}
+      </div>
+    </div>`;
+  }).join("")}
+  </div>`;
+}
+
+// ── Onglet 2 : Par opérateur ─────────────────────────────────────
+function renderProdOperateurs(el){
+  const now=new Date();
+  const operateurs = (DB.users||[]).filter(u=>u.active!==false);
+
+  if(!operateurs.length){ el.innerHTML=`<div class="empty">Aucun utilisateur actif</div>`; return; }
+
+  el.innerHTML=`<div style="display:flex;flex-direction:column;gap:14px">
+  ${operateurs.map(u=>{
+    const myEtapes=(DB.prodEtapes||[]).filter(e=>e.operateur_id===u.id&&e.statut!=="termine");
+    if(!myEtapes.length)return "";
+    const retard=myEtapes.filter(e=>e.date_fin_prev&&new Date(e.date_fin_prev)<now);
+    return`<div class="card panel">
+      <div class="panel-h">
+        <div style="width:36px;height:36px;border-radius:50%;background:var(--cyan)18;border:2px solid var(--cyan);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:var(--cyan)">${(u.name||"?")[0].toUpperCase()}</div>
+        <div style="margin-left:10px">
+          <div style="font-size:14px;font-weight:700">${esc(u.name)}</div>
+          <div style="font-size:11px;color:var(--txt-2)">${myEtapes.length} tâche(s) actives${retard.length?` · <span style="color:var(--danger);font-weight:700">${retard.length} en retard</span>`:""}</div>
+        </div>
+        <div class="spacer"></div>
+        ${["impression","creation","finition"].map(et=>{
+          const n=myEtapes.filter(e=>e.etape===et).length;
+          return n?`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:${prodEtapeColor(et)}18;color:${prodEtapeColor(et)};font-weight:600">${prodEtapeIcon(et)} ×${n}</span>`:"";
+        }).join(" ")}
+      </div>
+      <table style="font-size:12px;margin-top:8px"><thead><tr>
+        <th>Commande</th><th>Étape</th><th>Statut</th><th>Deadline</th><th></th>
+      </tr></thead><tbody>
+      ${myEtapes.sort((a,b)=>new Date(a.date_fin_prev||"9999")-new Date(b.date_fin_prev||"9999")).map(e=>{
+        const cmd=(DB.commandes||[]).find(c=>c.id===e.commande_id)||{};
+        const isLate=e.date_fin_prev&&new Date(e.date_fin_prev)<now&&e.statut!=="termine";
+        return`<tr ${isLate?"style=\"background:var(--danger)0A\""  :""}>
+          <td><div class="nm" style="font-size:12px">${esc(cmd.numero||"")} — ${esc(cmd.titre||"")}</div><div class="meta">${esc(clientName(cmd.clientId))}</div></td>
+          <td>${prodEtapeIcon(e.etape)} ${esc(prodEtapeLabel(e.etape))}</td>
+          <td>${prodStatutBadge(e.statut)}</td>
+          <td style="color:${isLate?"var(--danger)":"inherit"};font-weight:${isLate?"700":"400"}">
+            ${e.date_fin_prev?new Date(e.date_fin_prev).toLocaleDateString("fr-FR"):"—"}${isLate?" ⚠️":""}
+          </td>
+          <td>${wr("production")?`<button class="btn btn-sm btn-ghost" onclick="changerStatutEtape('${e.id}')">🔄</button>`:""}
+          <button class="btn btn-sm btn-ghost" onclick="openProdEtape('${e.id}')">👁</button></td>
+        </tr>`;
+      }).join("")}
+      </tbody></table>
+    </div>`;
+  }).filter(Boolean).join("")||`<div class="empty">Aucune étape assignée</div>`}
+  </div>`;
+}
+
+// ── Onglet 3 : Par commande ──────────────────────────────────────
+function renderProdCommandes(el){
+  const now=new Date();
+  const actives=(DB.commandes||[]).filter(c=>c.statut!=="livré"&&c.statut!=="facturé")
+    .sort((a,b)=>new Date(a.deadline||"9999")-new Date(b.deadline||"9999"));
+
+  if(!actives.length){el.innerHTML=`<div class="empty">Aucune commande en cours</div>`;return;}
+
+  el.innerHTML=`<div style="display:flex;flex-direction:column;gap:12px">
+  ${actives.map(cmd=>{
+    const etapes=(DB.prodEtapes||[]).filter(e=>e.commande_id===cmd.id)
+      .sort((a,b)=>PROD_ETAPES.findIndex(x=>x.k===a.etape)-PROD_ETAPES.findIndex(x=>x.k===b.etape));
+    const etapesCurrent=etapes.filter(e=>e.statut==="en_cours");
+    const isLate=cmd.deadline&&new Date(cmd.deadline)<now;
+    const progress=etapes.length?Math.round(etapes.filter(e=>e.statut==="termine").length/PROD_ETAPES.length*100):0;
+
+    return`<div class="card panel" style="${isLate?"border-left:3px solid var(--danger)":""}">
+      <div class="panel-h">
+        <div>
+          <div style="font-size:13px;font-weight:700">${esc(cmd.numero)} — ${esc(cmd.titre)}</div>
+          <div style="font-size:11px;color:var(--txt-2)">${esc(clientName(cmd.clientId))} · Deadline : <span style="color:${isLate?"var(--danger)":"inherit"};font-weight:${isLate?"700":"400"}">${cmd.deadline?new Date(cmd.deadline).toLocaleDateString("fr-FR"):"—"}</span>${isLate?" ⚠️":""}</div>
+        </div>
+        <div class="spacer"></div>
+        <div style="text-align:right">
+          <div style="font-size:10px;color:var(--txt-2);margin-bottom:4px">Progression</div>
+          <div style="width:120px;height:6px;background:var(--ligne);border-radius:3px;overflow:hidden">
+            <div style="width:${progress}%;height:100%;background:${progress===100?"var(--ok)":"var(--cyan)"};border-radius:3px;transition:width .3s"></div>
+          </div>
+          <div style="font-size:10px;color:var(--txt-2);margin-top:2px">${etapes.filter(e=>e.statut==="termine").length}/${PROD_ETAPES.length} étapes</div>
+        </div>
+        ${wr("production")?`<button class="btn btn-sm" onclick="openNouvelleEtape('',{cmd:'${cmd.id}'})" style="margin-left:8px">+ Étape</button>`:""}
+      </div>
+
+      <!-- Timeline des étapes -->
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:10px">
+        ${PROD_ETAPES.map(et=>{
+          const e=etapes.find(x=>x.etape===et.k);
+          const op=e?(DB.users||[]).find(u=>u.id===e.operateur_id):null;
+          const bg=e?{en_attente:"var(--papier)",en_cours:et.color+"25",termine:"var(--ok)18",bloque:"var(--danger)18"}[e.statut]||"var(--papier)":"var(--papier)";
+          const border=e?{en_attente:"var(--ligne)",en_cours:et.color,termine:"var(--ok)",bloque:"var(--danger)"}[e.statut]||"var(--ligne)":"var(--ligne)dashed";
+          return`<div onclick="${e?`openProdEtape('${e.id}')`:`openNouvelleEtape('${et.k}',{cmd:'${cmd.id}'})`}" style="padding:5px 8px;border-radius:6px;border:1px solid ${border};background:${bg};cursor:pointer;min-width:80px;text-align:center" title="${et.label}${op?" — "+op.name:""}${e?" — "+prodStatutBadge(e.statut):""}">
+            <div style="font-size:12px">${et.icon}</div>
+            <div style="font-size:9px;color:${e?{en_attente:"var(--txt-3)",en_cours:et.color,termine:"var(--ok)",bloque:"var(--danger)"}[e.statut]:"var(--txt-3)"};">${et.label}</div>
+            ${op?`<div style="font-size:8px;color:var(--cyan)">${(op.name||"").split(" ")[0]}</div>`:""}
+          </div>`;
+        }).join("")}
+      </div>
+      ${etapesCurrent.length?`<div style="margin-top:8px;padding:6px 10px;background:var(--cyan)10;border-radius:6px;font-size:11px;color:var(--cyan)">▶ En cours : ${etapesCurrent.map(e=>prodEtapeLabel(e.etape)).join(", ")}</div>`:""}
+    </div>`;
+  }).join("")}
+  </div>`;
+}
+
+// ── Onglet 4 : Journal d'activité ───────────────────────────────
+function renderProdActivite(el){
+  const logs=[...(DB.prodActivite||[])].sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,50);
+  const typeIcon={avancement:"⏩",commentaire:"💬",alerte:"⚠️",validation:"✅",revision:"🔄",photo:"📷"};
+
+  el.innerHTML=`
+  <div class="card panel">
+    <div class="panel-h">
+      <h3>Journal d'activité</h3><div class="spacer"></div>
+      ${wr("production")?`<button class="btn btn-sm btn-primary" onclick="openAjoutActivite()">+ Entrée</button>`:""}
+    </div>
+    ${logs.length===0?`<div class="empty">Aucune activité enregistrée</div>`:`
+    <div style="display:flex;flex-direction:column;gap:8px">
+    ${logs.map(log=>{
+      const cmd=(DB.commandes||[]).find(c=>c.id===log.commande_id)||{};
+      const auteur=(DB.users||[]).find(u=>u.id===log.auteur_id);
+      const date=log.created_at?new Date(log.created_at):null;
+      return`<div style="display:flex;gap:10px;padding:10px;border-radius:8px;background:var(--papier)">
+        <div style="font-size:18px;flex-shrink:0">${typeIcon[log.type_action]||"📝"}</div>
+        <div style="flex:1">
+          <div style="display:flex;justify-content:space-between;margin-bottom:2px">
+            <div style="font-size:11px;font-weight:700">${esc(cmd.numero||"—")} — ${esc(cmd.titre||"")}</div>
+            <div style="font-size:10px;color:var(--txt-2)">${date?date.toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}):"—"}</div>
+          </div>
+          <div style="font-size:12px;color:var(--txt-1)">${esc(log.message)}</div>
+          <div style="font-size:10px;color:var(--txt-2);margin-top:3px">par ${auteur?esc(auteur.name):"Système"}</div>
+        </div>
+      </div>`;
+    }).join("")}
+    </div>`}
+  </div>`;
+}
+
+// ── CRUD : ouvrir une étape ──────────────────────────────────────
+function openProdEtape(id){
+  const e=(DB.prodEtapes||[]).find(x=>x.id===id); if(!e)return;
+  const cmd=(DB.commandes||[]).find(c=>c.id===e.commande_id)||{};
+  const op=(DB.users||[]).find(u=>u.id===e.operateur_id);
+  const logs=(DB.prodActivite||[]).filter(a=>a.etape_id===id)
+    .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+
+  drawer(`${prodEtapeIcon(e.etape)} ${prodEtapeLabel(e.etape)}`,esc(cmd.numero||"")+" — "+esc(cmd.titre||""),`
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      ${kv("Commande",esc(cmd.titre||""))}
+      ${kv("Client",clientName(cmd.clientId))}
+      ${kv("Opérateur",op?esc(op.name):"Non assigné")}
+      ${kv("Statut",prodStatutBadge(e.statut))}
+      ${kv("Début",e.date_debut?new Date(e.date_debut).toLocaleDateString("fr-FR"):"—")}
+      ${kv("Deadline",e.date_fin_prev?new Date(e.date_fin_prev).toLocaleDateString("fr-FR"):"—")}
+      ${kv("Terminé le",e.date_fin_reel?new Date(e.date_fin_reel).toLocaleDateString("fr-FR"):"—")}
+      ${kv("Priorité",["","🔴 Urgente","🟡 Normale","🟢 Basse"][e.priorite||2])}
+    </div>
+    ${e.notes?`<div style="padding:8px 12px;background:var(--papier);border-radius:6px;font-size:12px">${esc(e.notes)}</div>`:""}
+    ${logs.length?`<div><div style="font-size:11px;font-weight:700;margin-bottom:6px;color:var(--txt-2)">HISTORIQUE</div>
+    ${logs.slice(0,5).map(l=>`<div style="padding:6px 0;border-bottom:1px solid var(--ligne);font-size:11px"><span style="color:var(--txt-2)">${new Date(l.created_at||0).toLocaleDateString("fr-FR")}</span> — ${esc(l.message)}</div>`).join("")}
+    </div>`:""}
+  </div>`,
+  [
+    wr("production")?{label:"Modifier",cls:"btn-primary",edit:1,fn:`editProdEtape('${id}')`}:null,
+    wr("production")?{label:"🔄 Changer statut",cls:"btn",fn:`changerStatutEtape('${id}')`}:null,
+    {label:"💬 Commenter",cls:"btn-ghost",fn:`ajouterCommentaire('${id}','${e.commande_id}')`},
+  ].filter(Boolean));
+}
+
+// ── CRUD : créer / modifier une étape ───────────────────────────
+function openNouvelleEtape(etapeDefaut, opts){
+  if(!wr("production"))return;
+  const cmdId=opts?.cmd||"";
+  const cmdOpts=(DB.commandes||[]).filter(c=>c.statut!=="livré"&&c.statut!=="facturé")
+    .map(c=>`<option value="${c.id}" ${c.id===cmdId?"selected":""}>${esc(c.numero)} — ${esc(c.titre)}</option>`).join("");
+  const usrOpts=(DB.users||[]).filter(u=>u.active!==false)
+    .map(u=>`<option value="${u.id}">${esc(u.name)}</option>`).join("");
+  const etapeOpts=PROD_ETAPES.map(e=>`<option value="${e.k}" ${e.k===etapeDefaut?"selected":""}>${e.icon} ${e.label}</option>`).join("");
+
+  modal(`<h2>➕ Nouvelle étape de production</h2>
+  <div class="row2">
+    <div class="field"><label>Commande *</label><select id="pe-cmd"><option value="">— Choisir —</option>${cmdOpts}</select></div>
+    <div class="field"><label>Étape *</label><select id="pe-etape">${etapeOpts}</select></div>
+  </div>
+  <div class="row2">
+    <div class="field"><label>Opérateur assigné</label><select id="pe-op"><option value="">— Non assigné —</option>${usrOpts}</select></div>
+    <div class="field"><label>Rôle opérateur</label><select id="pe-role">
+      ${PROD_ROLES.map(r=>`<option>${r}</option>`).join("")}
+    </select></div>
+  </div>
+  <div class="row2">
+    <div class="field"><label>Début</label><input id="pe-deb" type="date" value="${todayISO()}"></div>
+    <div class="field"><label>Deadline prévue</label><input id="pe-fin" type="date"></div>
+  </div>
+  <div class="row2">
+    <div class="field"><label>Priorité</label><select id="pe-prio">
+      <option value="1">🔴 Urgente</option>
+      <option value="2" selected>🟡 Normale</option>
+      <option value="3">🟢 Basse</option>
+    </select></div>
+    <div class="field"><label>Statut initial</label><select id="pe-statut">
+      <option value="en_attente">En attente</option>
+      <option value="en_cours">En cours</option>
+    </select></div>
+  </div>
+  <div class="field"><label>Notes</label><textarea id="pe-notes" rows="2" placeholder="Instructions, fichiers attendus..."></textarea></div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="saveProdEtape()">Créer l'étape</button>
+  </div>`);
+}
+
+async function saveProdEtape(){
+  const gv=id=>document.getElementById(id)?.value?.trim()||"";
+  const cmdId=gv("pe-cmd"); if(!cmdId){toast("Commande requise");return;}
+  const etape=gv("pe-etape"); if(!etape){toast("Étape requise");return;}
+
+  const e={
+    id:crypto.randomUUID(),
+    commande_id:cmdId, etape,
+    statut:gv("pe-statut")||"en_attente",
+    operateur_id:gv("pe-op")||null,
+    role_operateur:gv("pe-role")||"",
+    date_debut:gv("pe-deb")||null,
+    date_fin_prev:gv("pe-fin")||null,
+    priorite:+gv("pe-prio")||2,
+    notes:gv("pe-notes")||"",
+  };
+
+  await dbUpsert("crm_prod_etapes", e);
+  (DB.prodEtapes=DB.prodEtapes||[]).push(e);
+
+  // Journal activité
+  const log={id:crypto.randomUUID(),commande_id:cmdId,etape_id:e.id,auteur_id:USER?.id||null,type_action:"avancement",message:`Étape "${prodEtapeLabel(etape)}" créée — statut : ${PROD_STATUTS[e.statut]?.label||e.statut}`,created_at:new Date().toISOString()};
+  await dbUpsert("crm_prod_activite",log);
+  (DB.prodActivite=DB.prodActivite||[]).push(log);
+
+  toast(`✅ Étape ${prodEtapeLabel(etape)} créée`);
+  closeOverlays();
+  go("production");
+}
+
+// ── Changer statut d'une étape rapidement ───────────────────────
+function changerStatutEtape(id){
+  if(!wr("production"))return;
+  const e=(DB.prodEtapes||[]).find(x=>x.id===id); if(!e)return;
+  modal(`<h2>🔄 Changer le statut</h2>
+  <div style="font-size:13px;font-weight:600;margin-bottom:12px">${prodEtapeIcon(e.etape)} ${prodEtapeLabel(e.etape)}</div>
+  <div style="display:flex;flex-direction:column;gap:8px">
+  ${Object.entries(PROD_STATUTS).map(([k,v])=>`
+  <button onclick="setStatutEtape('${id}','${k}')" style="padding:10px 16px;border-radius:8px;border:2px solid ${e.statut===k?"var(--cyan)":"var(--ligne)"};background:${e.statut===k?"var(--cyan)18":"var(--carte)"};text-align:left;cursor:pointer;font-size:13px;font-weight:${e.statut===k?"700":"400"}">
+    ${v.label}
+  </button>`).join("")}
+  </div>
+  <div class="modal-actions"><button class="btn" onclick="closeOverlays()">Annuler</button></div>`);
+}
+
+async function setStatutEtape(id,newStatut){
+  const e=(DB.prodEtapes||[]).find(x=>x.id===id); if(!e)return;
+  const old=e.statut;
+  e.statut=newStatut;
+  if(newStatut==="en_cours"&&!e.date_debut) e.date_debut=todayISO();
+  if(newStatut==="termine"&&!e.date_fin_reel) e.date_fin_reel=todayISO();
+  await dbUpsert("crm_prod_etapes",e);
+
+  const log={id:crypto.randomUUID(),commande_id:e.commande_id,etape_id:e.id,auteur_id:USER?.id||null,type_action:"avancement",message:`${prodEtapeLabel(e.etape)} : ${PROD_STATUTS[old]?.label} → ${PROD_STATUTS[newStatut]?.label}`,created_at:new Date().toISOString()};
+  await dbUpsert("crm_prod_activite",log);
+  (DB.prodActivite=DB.prodActivite||[]).push(log);
+
+  toast(`✅ Statut mis à jour : ${PROD_STATUTS[newStatut]?.label}`);
+  closeOverlays();
+  go("production");
+}
+
+// ── Commenter une étape ──────────────────────────────────────────
+function ajouterCommentaire(etapeId,cmdId){
+  modal(`<h2>💬 Ajouter un commentaire</h2>
+  <div class="field"><label>Type</label><select id="ac-type">
+    <option value="commentaire">💬 Commentaire</option>
+    <option value="alerte">⚠️ Alerte</option>
+    <option value="validation">✅ Validation</option>
+    <option value="revision">🔄 Révision demandée</option>
+  </select></div>
+  <div class="field"><label>Message *</label><textarea id="ac-msg" rows="3" placeholder="Décrivez l'avancement, un problème..."></textarea></div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="saveCommentaire('${etapeId}','${cmdId}')">Enregistrer</button>
+  </div>`);
+}
+
+async function saveCommentaire(etapeId,cmdId){
+  const msg=document.getElementById("ac-msg")?.value?.trim();
+  if(!msg){toast("Message requis");return;}
+  const type=document.getElementById("ac-type")?.value||"commentaire";
+  const log={id:crypto.randomUUID(),commande_id:cmdId,etape_id:etapeId,auteur_id:USER?.id||null,type_action:type,message:msg,created_at:new Date().toISOString()};
+  await dbUpsert("crm_prod_activite",log);
+  (DB.prodActivite=DB.prodActivite||[]).push(log);
+  toast("✅ Commentaire enregistré");
+  closeOverlays();
+}
+
+// ── openAjoutActivite (bouton journal) ──────────────────────────
+function openAjoutActivite(){
+  const cmdOpts=(DB.commandes||[]).filter(c=>c.statut!=="livré"&&c.statut!=="facturé")
+    .map(c=>`<option value="${c.id}">${esc(c.numero)} — ${esc(c.titre)}</option>`).join("");
+  modal(`<h2>📝 Nouvelle entrée journal</h2>
+  <div class="field"><label>Commande</label><select id="aa-cmd"><option value="">— Générale —</option>${cmdOpts}</select></div>
+  <div class="field"><label>Type</label><select id="aa-type">
+    <option value="commentaire">💬 Commentaire</option>
+    <option value="avancement">⏩ Avancement</option>
+    <option value="alerte">⚠️ Alerte</option>
+    <option value="validation">✅ Validation</option>
+  </select></div>
+  <div class="field"><label>Message *</label><textarea id="aa-msg" rows="3"></textarea></div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="saveActivite()">Enregistrer</button>
+  </div>`);
+}
+
+async function saveActivite(){
+  const msg=document.getElementById("aa-msg")?.value?.trim(); if(!msg){toast("Message requis");return;}
+  const log={id:crypto.randomUUID(),commande_id:document.getElementById("aa-cmd")?.value||null,etape_id:null,auteur_id:USER?.id||null,type_action:document.getElementById("aa-type")?.value||"commentaire",message:msg,created_at:new Date().toISOString()};
+  await dbUpsert("crm_prod_activite",log);
+  (DB.prodActivite=DB.prodActivite||[]).push(log);
+  toast("✅ Entrée enregistrée");
+  closeOverlays();
+  go("production");
+}
+
+// ── Initialiser les étapes de toutes les commandes actives ───────
+function initEtapesCommande(){
+  if(!wr("production"))return;
+  const actives=(DB.commandes||[]).filter(c=>c.statut!=="livré"&&c.statut!=="facturé");
+  const sansEtape=actives.filter(c=>!(DB.prodEtapes||[]).some(e=>e.commande_id===c.id));
+  if(!sansEtape.length){toast("Toutes les commandes ont déjà des étapes ✅");return;}
+  confirmModal(`Initialiser la production pour ${sansEtape.length} commande(s) ?`,
+  `Créera l'étape "Brief" pour chaque commande sans étape de production.`,
+  async()=>{
+    for(const cmd of sansEtape){
+      const e={id:crypto.randomUUID(),commande_id:cmd.id,etape:"brief",statut:"en_cours",operateur_id:cmd.responsableId||cmd.responsable_id||null,date_debut:todayISO(),priorite:2,notes:""};
+      await dbUpsert("crm_prod_etapes",e);
+      (DB.prodEtapes=DB.prodEtapes||[]).push(e);
+    }
+    toast(`✅ ${sansEtape.length} commande(s) initialisées`);
+    go("production");
+  });
+}
+
+// ── editProdEtape (modifier) ─────────────────────────────────────
+function editProdEtape(id){
+  if(!wr("production"))return;
+  const e=(DB.prodEtapes||[]).find(x=>x.id===id); if(!e)return;
+  const usrOpts=(DB.users||[]).filter(u=>u.active!==false)
+    .map(u=>`<option value="${u.id}" ${e.operateur_id===u.id?"selected":""}>${esc(u.name)}</option>`).join("");
+  modal(`<h2>✏️ Modifier l'étape</h2>
+  <div class="row2">
+    <div class="field"><label>Opérateur</label><select id="epe-op"><option value="">— Non assigné —</option>${usrOpts}</select></div>
+    <div class="field"><label>Priorité</label><select id="epe-prio">
+      <option value="1" ${e.priorite==1?"selected":""}>🔴 Urgente</option>
+      <option value="2" ${e.priorite==2?"selected":""}>🟡 Normale</option>
+      <option value="3" ${e.priorite==3?"selected":""}>🟢 Basse</option>
+    </select></div>
+  </div>
+  <div class="row2">
+    <div class="field"><label>Début</label><input id="epe-deb" type="date" value="${e.date_debut||""}"></div>
+    <div class="field"><label>Deadline prévue</label><input id="epe-fin" type="date" value="${e.date_fin_prev||""}"></div>
+  </div>
+  <div class="field"><label>Notes</label><textarea id="epe-notes" rows="3">${esc(e.notes||"")}</textarea></div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-danger" onclick="delProdEtape('${id}')">Supprimer</button>
+    <button class="btn btn-primary" onclick="updateProdEtape('${id}')">Enregistrer</button>
+  </div>`);
+}
+
+async function updateProdEtape(id){
+  const e=(DB.prodEtapes||[]).find(x=>x.id===id); if(!e)return;
+  const gv=eid=>document.getElementById(eid)?.value?.trim()||"";
+  Object.assign(e,{operateur_id:gv("epe-op")||null,priorite:+gv("epe-prio")||2,date_debut:gv("epe-deb")||null,date_fin_prev:gv("epe-fin")||null,notes:gv("epe-notes")||""});
+  await dbUpsert("crm_prod_etapes",e);
+  toast("✅ Étape mise à jour");
+  closeOverlays();
+  go("production");
+}
+
+async function delProdEtape(id){
+  if(!wr("production"))return;
+  const e=(DB.prodEtapes||[]).find(x=>x.id===id); if(!e)return;
+  confirmModal("Supprimer cette étape ?","Cette action est irréversible.",async()=>{
+    DB.prodEtapes=DB.prodEtapes.filter(x=>x.id!==id);
+    await SB.from("crm_prod_etapes").delete().eq("id",id);
+    toast("Étape supprimée");
+    closeOverlays();
+    go("production");
   });
 }
