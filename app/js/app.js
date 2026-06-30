@@ -193,7 +193,7 @@ function defaultSettings(){
   return {company:defaultCompany(),tva:18,devise:"F CFA",year:new Date().getFullYear(),seqDevis:1,seqFacture:1,seqCommande:1};
 }
 function defaultRoles(){
-  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","depenses","crh","entrepot","caisses","infographistes","parametres"].forEach(m=>full[m]="edit");
+  const full={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","depenses","crh","entrepot","caisses","infographistes","production","parametres"].forEach(m=>full[m]="edit");
   const mk=(map)=>{const o={};["dashboard","clients","devis","factures","commandes","compta","catalogue","users","fournisseurs","fiscalite","depenses","crh","entrepot","caisses","parametres"].forEach(m=>o[m]=map[m]||"none");return o};
   return [
     {id:"administrateur",name:"Administrateur",system:true,color:"noir",perms:full,widgets:["kpi_encaisse","kpi_reste","kpi_devis","kpi_leads","chart_ca","pipe_devis","list_relance","list_echeances"]},
@@ -275,7 +275,8 @@ const MODS=[
   {k:"crh",label:"RH / Employés"},
   {k:"entrepot",label:"Entrepôt"},
   {k:"caisses",label:"Caisses"},
-  {k:"infographistes",label:"Infographistes"}
+  {k:"infographistes",label:"Infographistes"},
+  {k:"production",label:"Atelier Production"}
 ];
 const WIDGETS=[
   {k:"kpi_encaisse",label:"Encaissé (mois/année)"},{k:"kpi_reste",label:"Reste à encaisser"},
@@ -1192,6 +1193,7 @@ const ROUTES={
   entrepot:{t:"Entrepôt & Stock",render:viewEntrepot},
   caisses:{t:"Caisses & Trésorerie",render:viewCaisses},
   infographistes:{t:"Suivi infographistes",render:viewInfographistes},
+  production:{t:"Atelier & Production",render:viewProduction},
 };
 function go(route){
   if(!USER)return;
