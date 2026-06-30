@@ -115,7 +115,8 @@ async function loadAll(){
          employesRows, congesRows,
          stockMvtRows, caissesRows, caisseMvtRows,
          planComptaRows, journalRows,
-         prodEtapesRows, prodActiviteRows] = await Promise.all([
+         prodEtapesRows, prodActiviteRows,
+         emailLogsRows] = await Promise.all([
     dbFetchOne("app_settings"),
     dbFetch("crm_roles","created_at"),
     dbFetch("crm_users","created_at"),
@@ -135,6 +136,7 @@ async function loadAll(){
     dbFetch("journal_entries","date"),
     dbFetch("crm_prod_etapes","created_at"),
     dbFetch("crm_prod_activite","created_at"),
+    dbFetch("crm_email_logs","created_at"),
   ]);
 
   // Settings — reconstruire au format attendu par l'app
@@ -181,6 +183,7 @@ async function loadAll(){
   DB.journal      = journalRows;
   DB.prodEtapes   = prodEtapesRows;
   DB.prodActivite = prodActiviteRows;
+  DB.emailLogs   = emailLogsRows;
 }
 
 /* ============================================================
@@ -1394,7 +1397,8 @@ function openDevis(id){
     [d.statut==="brouillon"?{label:"Marquer envoyé",cls:"btn",edit:1,fn:`setDevisStatut('${id}','envoyé')`}:null,
      d.statut==="envoyé"?{label:"Marquer accepté",cls:"btn",edit:1,fn:`setDevisStatut('${id}','accepté')`}:null,
      (d.statut==="accepté"||d.statut==="envoyé")?{label:"→ Facturer",cls:"btn-mag",edit:1,fn:`devisToFacture('${id}')`}:null,
-     {label:"Imprimer",cls:"btn-ghost",fn:`printDoc('devis','${id}')`}
+     {label:"Imprimer",cls:"btn-ghost",fn:`printDoc('devis','${id}')`},
+     {label:"📧 Envoyer",cls:"btn",fn:`openEmailDoc('devis','${id}')`}
     ].filter(Boolean));
 }
 function openFacture(id){
@@ -1404,7 +1408,9 @@ function openFacture(id){
   drawer(f.numero,clientName(f.clientId),docView(f,"factures"),
     [st!=="payée"?{label:"Enregistrer paiement",cls:"btn-mag",edit:1,fn:`payModal('${id}')`}:null,
      (f.fneStatus!=="certifiee")?{label:"🔒 Certifier FNE",cls:"btn",edit:1,fn:`certifierFNE('${id}')`}:null,
-     {label:"Imprimer",cls:"btn-ghost",fn:`printDoc('factures','${id}')`}
+     {label:"Imprimer",cls:"btn-ghost",fn:`printDoc('factures','${id}')`},
+     {label:"📧 Envoyer",cls:"btn",fn:`openEmailDoc('factures','${id}')`},
+     st!=="payée"?{label:"🔔 Relancer",cls:"btn",fn:`openRelanceEmail('${id}')`}:null
     ].filter(Boolean));
 }
 function setDevisStatut(id,s){if(!guard("devis"))return;DB.devis.find(x=>x.id===id).statut=s;sync("devis",DB.devis.find(x=>x.id===id));closeOverlays();toast("Statut mis à jour");go("devis")}
@@ -5376,4 +5382,241 @@ async function delProdEtape(id){
     closeOverlays();
     go("production");
   });
+}
+
+/* ============================================================
+   MODULE EMAIL — Envoi de devis/factures depuis le CRM
+   From : Creatis Studio <infos@creatis-ci.com>
+   Via  : Supabase Edge Function crm-send-email (Resend)
+   ============================================================ */
+
+const EMAIL_FN = `${typeof SUPABASE_URL!=="undefined"?SUPABASE_URL.replace("/rest/v1",""):""}/functions/v1/crm-send-email`.replace("https://","https://").replace("//functions","https://crlfkiniwalhzvpxrqav.supabase.co/functions");
+// URL directe de la fonction
+const CRM_EMAIL_URL = "https://crlfkiniwalhzvpxrqav.supabase.co/functions/v1/crm-send-email";
+
+// ── Ouvrir modal envoi email ─────────────────────────────────────
+function openEmailDoc(kind, id){
+  if(!wr(kind))return;
+  const doc = kind==="factures"
+    ? (DB.factures||[]).find(x=>x.id===id)
+    : (DB.devis||[]).find(x=>x.id===id);
+  if(!doc){toast("Document introuvable");return;}
+
+  const cli  = (DB.clients||[]).find(x=>x.id===doc.clientId)||{};
+  const isF  = kind==="factures";
+  const dev  = DB.settings.devise||"F CFA";
+  const fmt  = n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ");
+  const co   = DB.settings.company||{};
+
+  // Objet par défaut
+  const defSubject = isF
+    ? `Facture ${doc.numero} — ${co.name||"Creatis Studio"}`
+    : `Devis ${doc.numero} — ${co.name||"Creatis Studio"}`;
+
+  // Corps par défaut
+  const defBody = isF
+    ? `Bonjour ${esc(cli.contact||cli.nom||"")},\n\nVeuillez trouver ci-joint votre facture ${doc.numero} d'un montant de ${fmt(doc.montantTTC)} ${dev}.\n\nDate d'échéance : ${doc.echeance?new Date(doc.echeance).toLocaleDateString("fr-FR"):"—"}\n\nN'hésitez pas à nous contacter pour toute question.\n\nCordialement,\n${co.name||"Creatis Studio"}\n${co.tel||""} · ${co.email||"infos@creatis-ci.com"}`
+    : `Bonjour ${esc(cli.contact||cli.nom||"")},\n\nVeuillez trouver ci-joint notre devis ${doc.numero} d'un montant de ${fmt(doc.montantTTC)} ${dev}.\n\nCe devis est valable jusqu'au : ${doc.validite?new Date(doc.validite).toLocaleDateString("fr-FR"):"—"}\n\nN'hésitez pas à nous contacter pour toute question.\n\nCordialement,\n${co.name||"Creatis Studio"}\n${co.tel||""} · ${co.email||"infos@creatis-ci.com"}`;
+
+  // Historique des emails précédents pour ce doc
+  const logs = (DB.emailLogs||[]).filter(l=>l.doc_id===id)
+    .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,3);
+
+  modal(`<h2>📧 Envoyer ${isF?"la facture":"le devis"} par email</h2>
+  <div style="padding:8px 12px;background:var(--papier);border-radius:6px;font-size:11px;margin-bottom:12px">
+    De : <strong>infos@creatis-ci.com</strong> · via Resend
+  </div>
+  <div class="field"><label>Destinataire (email du client) *</label>
+    <input id="em-to" type="email" value="${esc(cli.email||"")}" placeholder="client@example.com">
+  </div>
+  <div class="field"><label>Objet *</label>
+    <input id="em-subject" value="${esc(defSubject)}">
+  </div>
+  <div class="field"><label>Message *</label>
+    <textarea id="em-body" rows="8" style="font-size:12px;font-family:monospace">${esc(defBody)}</textarea>
+  </div>
+  ${logs.length?`<div style="margin-top:8px;padding:8px;background:var(--papier);border-radius:6px">
+    <div style="font-size:10px;font-weight:700;color:var(--txt-2);margin-bottom:4px">ENVOIS PRÉCÉDENTS</div>
+    ${logs.map(l=>`<div style="font-size:11px;display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--ligne)">
+      <span>${esc(l.destinataire)}</span>
+      <span style="color:${l.statut==="envoye"?"var(--ok)":"var(--danger)"}">${l.statut==="envoye"?"✅":"❌"} ${new Date(l.created_at||0).toLocaleDateString("fr-FR")}</span>
+    </div>`).join("")}
+  </div>`:""}
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="sendDocEmail('${kind}','${id}')">📤 Envoyer</button>
+  </div>`);
+}
+
+// ── Construire HTML email brandé Creatis ─────────────────────────
+function buildEmailHtml(kind, doc, bodyText){
+  const co  = DB.settings.company||{};
+  const dev = DB.settings.devise||"F CFA";
+  const fmt = n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ");
+  const isF = kind==="factures";
+  const cli = (DB.clients||[]).find(x=>x.id===doc.clientId)||{};
+
+  const bodyHtml = esc(bodyText||"").replace(/\n/g,"<br>");
+
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"></head><body style="margin:0;padding:0;background:#F1F2F4;font-family:Arial,Helvetica,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 8px">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08)">
+  <!-- Bande CMJN -->
+  <tr>
+    <td width="150" style="background:#00AEEF;height:5px"></td>
+    <td width="150" style="background:#EC008C;height:5px"></td>
+    <td width="150" style="background:#FFC400;height:5px"></td>
+    <td width="150" style="background:#1A1A1C;height:5px"></td>
+  </tr>
+  <!-- En-tête -->
+  <tr><td colspan="4" style="padding:24px 32px 16px">
+    <table width="100%"><tr>
+      <td>
+        <div style="font-size:20px;font-weight:800;color:#1A1A1C">${esc(co.name||"CREATIS STUDIO")}</div>
+        <div style="font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:#8A8E97;margin-top:2px">${esc(co.activite||"Création · Impression · Fournitures")}</div>
+      </td>
+      <td align="right">
+        <div style="font-size:14px;font-weight:700;color:${isF?"#EC008C":"#00AEEF"}">${isF?"FACTURE":"DEVIS"}</div>
+        <div style="font-size:16px;font-weight:800;color:#1A1A1C">${esc(doc.numero||"")}</div>
+      </td>
+    </tr></table>
+  </td></tr>
+  <!-- Corps -->
+  <tr><td colspan="4" style="padding:0 32px 20px">
+    <p style="font-size:14px;line-height:1.7;color:#1A1A1C">${bodyHtml}</p>
+  </td></tr>
+  <!-- Récap montants -->
+  <tr><td colspan="4" style="padding:0 32px 24px">
+    <table width="100%" style="background:#F7F7F8;border-radius:6px">
+      <tr>
+        <td style="padding:12px 16px;font-size:12px;color:#555">Montant HT</td>
+        <td align="right" style="padding:12px 16px;font-size:12px;font-weight:600">${fmt(doc.montantHT||0)} ${dev}</td>
+      </tr>
+      <tr>
+        <td style="padding:4px 16px;font-size:12px;color:#555">TVA ${doc.tva||18}%</td>
+        <td align="right" style="padding:4px 16px;font-size:12px">${fmt(doc.montantTVA||0)} ${dev}</td>
+      </tr>
+      <tr style="border-top:2px solid #1A1A1C">
+        <td style="padding:12px 16px;font-size:14px;font-weight:800;color:#1A1A1C">Total TTC</td>
+        <td align="right" style="padding:12px 16px;font-size:16px;font-weight:800;color:#EC008C">${fmt(doc.montantTTC||0)} ${dev}</td>
+      </tr>
+    </table>
+  </td></tr>
+  <!-- Pied -->
+  <tr style="background:#1A1A1C"><td colspan="4" style="padding:16px 32px">
+    <div style="font-size:11px;color:rgba(255,255,255,.6);line-height:1.8">
+      ${esc(co.name||"CREATIS STUDIO")} — RC ${esc(co.rc||"")} — CC ${esc(co.cc||"")}
+      <br>${esc(co.siege||"")} — Tél : ${esc(co.tel||"")} — ${esc(co.email||"infos@creatis-ci.com")}
+    </div>
+  </td></tr>
+  <!-- Bande bas -->
+  <tr>
+    <td width="150" style="background:#00AEEF;height:3px"></td>
+    <td width="150" style="background:#EC008C;height:3px"></td>
+    <td width="150" style="background:#FFC400;height:3px"></td>
+    <td width="150" style="background:#1A1A1C;height:3px"></td>
+  </tr>
+</table>
+</td></tr></table>
+</body></html>`;
+}
+
+// ── Envoyer le doc ───────────────────────────────────────────────
+async function sendDocEmail(kind, id){
+  const to      = document.getElementById("em-to")?.value?.trim();
+  const subject = document.getElementById("em-subject")?.value?.trim();
+  const bodyTxt = document.getElementById("em-body")?.value?.trim();
+
+  if(!to||!subject||!bodyTxt){toast("Tous les champs sont requis");return;}
+  if(!to.includes("@")){toast("Adresse email invalide");return;}
+
+  const doc = kind==="factures"
+    ? (DB.factures||[]).find(x=>x.id===id)
+    : (DB.devis||[]).find(x=>x.id===id);
+
+  const btn=document.querySelector('.modal-b .btn-primary');
+  if(btn){btn.textContent="⏳ Envoi…";btn.disabled=true;}
+
+  try {
+    const html = buildEmailHtml(kind, doc, bodyTxt);
+    const resp = await fetch(CRM_EMAIL_URL, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        to, subject, html,
+        type: kind==="factures"?"facture":"devis",
+        docId: id,
+        docNumero: doc?.numero||"",
+        envoyePar: USER?.id||null,
+      }),
+    });
+    const data = await resp.json();
+
+    if(!resp.ok || data.error){
+      toast("❌ Erreur envoi : "+(data.error||"Vérifiez la clé Resend"));
+      if(btn){btn.textContent="📤 Envoyer";btn.disabled=false;}
+      return;
+    }
+
+    // Mettre à jour le log local
+    const log={id:crypto.randomUUID(),type:kind==="factures"?"facture":"devis",
+      doc_id:id,doc_numero:doc?.numero||"",destinataire:to,sujet:subject,
+      statut:"envoye",erreur:null,created_at:new Date().toISOString()};
+    (DB.emailLogs=DB.emailLogs||[]).unshift(log);
+
+    toast(`✅ Email envoyé à ${to}`);
+    closeOverlays();
+
+  } catch(err){
+    toast("❌ Erreur réseau : "+String(err));
+    if(btn){btn.textContent="📤 Envoyer";btn.disabled=false;}
+  }
+}
+
+// ── Ouvrir modal relance paiement ────────────────────────────────
+function openRelanceEmail(factureId){
+  if(!wr("factures"))return;
+  const f = (DB.factures||[]).find(x=>x.id===factureId);
+  if(!f)return;
+  const cli = (DB.clients||[]).find(x=>x.id===f.clientId)||{};
+  const co  = DB.settings.company||{};
+  const dev = DB.settings.devise||"F CFA";
+  const fmt = n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ");
+  const reste = (f.montantTTC||0) - (f.paiements||[]).reduce((s,p)=>s+(+p.montant||0),0);
+  const defBody = `Bonjour ${esc(cli.contact||cli.nom||"")},\n\nNous nous permettons de vous relancer concernant la facture ${f.numero} d'un montant de ${fmt(f.montantTTC)} ${dev}, dont le solde restant est de ${fmt(reste)} ${dev}.\n\nDate d'échéance : ${f.echeance?new Date(f.echeance).toLocaleDateString("fr-FR"):"—"}\n\nNous vous serions reconnaissants de bien vouloir procéder au règlement dans les meilleurs délais.\n\nPour tout renseignement, n'hésitez pas à nous contacter.\n\nCordialement,\n${co.name||"Creatis Studio"}\n${co.tel||""} · ${co.email||"infos@creatis-ci.com"}`;
+
+  modal(`<h2>🔔 Relance paiement — ${f.numero}</h2>
+  <div style="padding:8px 12px;background:var(--danger)10;border-radius:6px;font-size:12px;margin-bottom:12px;color:var(--danger)">
+    Reste à encaisser : <strong>${fmt(reste)} ${dev}</strong>
+  </div>
+  <div class="field"><label>Email client *</label>
+    <input id="em-to" type="email" value="${esc(cli.email||"")}" placeholder="client@example.com">
+  </div>
+  <div class="field"><label>Objet</label>
+    <input id="em-subject" value="Relance facture ${f.numero} — ${co.name||"Creatis Studio"}">
+  </div>
+  <div class="field"><label>Message *</label>
+    <textarea id="em-body" rows="8" style="font-size:12px;font-family:monospace">${esc(defBody)}</textarea>
+  </div>
+  <div class="modal-actions">
+    <button class="btn" onclick="closeOverlays()">Annuler</button>
+    <button class="btn btn-primary" onclick="sendDocEmail('factures','${factureId}')">📤 Envoyer la relance</button>
+  </div>`);
+}
+
+// ── Helper : mini-historique emails pour un document ────────────
+function emailHistoryHtml(docId){
+  const logs=(DB.emailLogs||[]).filter(l=>l.doc_id===docId)
+    .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0)).slice(0,3);
+  if(!logs.length)return "";
+  return`<div style="margin-top:14px;padding:10px 12px;background:var(--papier);border-radius:6px">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-2);margin-bottom:6px">Emails envoyés</div>
+    ${logs.map(l=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--ligne);font-size:11px">
+      <div>
+        <span style="color:${l.statut==="envoye"?"var(--ok)":"var(--danger)"}">${l.statut==="envoye"?"✅":"❌"}</span>
+        ${esc(l.destinataire)}
+      </div>
+      <div style="color:var(--txt-2)">${new Date(l.created_at||0).toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}</div>
+    </div>`).join("")}
+  </div>`;
 }
