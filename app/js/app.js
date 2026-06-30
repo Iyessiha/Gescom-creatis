@@ -923,13 +923,20 @@ async function saveDepense(id){
   if(id){ const i=DB.depenses.findIndex(x=>x.id===id); if(i>=0) DB.depenses[i]=obj; }
   else   { DB.depenses.push(obj); }
   toast(id?"Dépense modifiée":"Dépense ajoutée");
-  closeOverlays(); go("depenses");
+  closeOverlays();
+  // Mise à jour douce : reste sur l'onglet/vue actuel
+  if(document.getElementById("dep-list")) renderDepList();
+  else if(document.getElementById("compta-tab-content")) renderComptaTab();
+  else go("depenses");
 }
 async function delDepense(id){
   if(!confirm("Supprimer cette dépense ?"))return;
   await dbDelete("depenses",id);
   DB.depenses = DB.depenses.filter(x=>x.id!==id);
-  toast("Dépense supprimée"); go("depenses");
+  toast("Dépense supprimée");
+  if(document.getElementById("dep-list")) renderDepList();
+  else if(document.getElementById("compta-tab-content")) renderComptaTab();
+  else go("depenses");
 }
 
 /* ============================================================
@@ -3255,7 +3262,15 @@ async function saveMvtCaisse(){
   if(!ok)return;
   (DB.caisseMvt=DB.caisseMvt||[]).push(mvt);
   toast(`✅ Mouvement enregistré — Solde : ${Math.round(soldeApres).toLocaleString("fr-FR")} ${DB.settings.devise||"F CFA"}`);
+  // Préserver les filtres actifs avant rechargement
+  const _fc=document.getElementById("fil-caisse")?.value||"";
+  const _ft=document.getElementById("fil-mvt-caisse")?.value||"";
   closeOverlays(); go("caisses");
+  setTimeout(()=>{
+    const s1=document.getElementById("fil-caisse"); if(s1&&_fc)s1.value=_fc;
+    const s2=document.getElementById("fil-mvt-caisse"); if(s2&&_ft)s2.value=_ft;
+    if(_fc||_ft) renderCaisseMvt();
+  },60);
 }
 
 async function delMvtCaisse(id, caisseId, impact){
@@ -3263,7 +3278,14 @@ async function delMvtCaisse(id, caisseId, impact){
   await dbDelete("crm_caisse_mvt",id);
   DB.caisseMvt=(DB.caisseMvt||[]).filter(x=>x.id!==id);
   toast("Mouvement supprimé");
+  const _fc3=document.getElementById("fil-caisse")?.value||"";
+  const _ft3=document.getElementById("fil-mvt-caisse")?.value||"";
   go("caisses");
+  setTimeout(()=>{
+    const s1=document.getElementById("fil-caisse"); if(s1&&_fc3)s1.value=_fc3;
+    const s2=document.getElementById("fil-mvt-caisse"); if(s2&&_ft3)s2.value=_ft3;
+    if(_fc3||_ft3) renderCaisseMvt();
+  },60);
 }
 
 function openCaisse(id){
@@ -3310,7 +3332,14 @@ async function saveCaisse(id){
   if(id){const i=(DB.caisses||[]).findIndex(x=>x.id===id);if(i>=0)DB.caisses[i]=obj;}
   else{(DB.caisses=DB.caisses||[]).push(obj);}
   toast(id?"Caisse modifiée":"Caisse créée");
+  const _fc4=document.getElementById("fil-caisse")?.value||"";
+  const _ft4=document.getElementById("fil-mvt-caisse")?.value||"";
   closeOverlays(); go("caisses");
+  setTimeout(()=>{
+    const s1=document.getElementById("fil-caisse"); if(s1&&_fc4)s1.value=_fc4;
+    const s2=document.getElementById("fil-mvt-caisse"); if(s2&&_ft4)s2.value=_ft4;
+    if(_fc4||_ft4) renderCaisseMvt();
+  },60);
 }
 
 /* ============================================================
@@ -4643,7 +4672,8 @@ async function saveEcritureOD(){
   }
   toast(`✅ Écriture ${jnl} enregistrée`);
   closeOverlays();
-  go("compta");
+  // Rester sur l'onglet actif (Grand Livre, Journal, etc.)
+  renderComptaTab();
 }
 
 /* ============================================================
