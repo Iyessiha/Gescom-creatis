@@ -441,7 +441,7 @@ async function certifierFNE(factureId){
   }
 }
 
-// Section FNE dans viewParametres
+// Section FNE dans viewParamètres
 function renderFneSettings(){
   const cfg = getFneConfig();
   return `
@@ -620,15 +620,10 @@ function viewFiscalite(){
   $("#pg-title").textContent = "Fiscalité & Obligations";
   $("#pg-sub").textContent   = `${co.name||"Creatis Studio"} — Régime ${regime} — Exercice ${y}`;
   $("#pg-actions").innerHTML = `
-    <button class="btn btn-primary" onclick="printFiscalite()">
-      🖨️ Imprimer la fiche
-    </button>
-    <button class="btn" style="border-color:#1D6F42;color:#1D6F42" onclick="exportFiscaliteExcel()">
-      📊 Excel
-    </button>
-    <button class="btn" onclick="openAcompte()">
-      💳 Enregistrer un acompte
-    </button>`;
+    <button class="btn" style="border-color:#1D6F42;color:#1D6F42" onclick="exportFiscaliteExcel()">📊 Excel</button>
+    <button class="btn" onclick="printFiscalite()">Fiche fiscale</button>
+    ${wr("fiscalite")?`<button class="btn btn-primary" onclick="openAcompte()">Enregistrer un acompte</button>`:""}
+  `;
 
   $("#view").innerHTML = `
 
@@ -798,7 +793,22 @@ function viewDepenses(){
 
   $("#pg-title").textContent="Dépenses";
   $("#pg-sub").textContent=`${DB.depenses.length} dépense(s) enregistrée(s)`;
-  $("#pg-actions").innerHTML=wr("depenses")?`<button class="btn btn-primary" onclick="openDepense()">+ Nouvelle dépense</button>`:"";
+  const _depCats=[...new Set(DB.depenses.map(d=>d.categorie).filter(Boolean))].sort();
+  $("#pg-actions").innerHTML=`
+    <input id="srch-dep" placeholder="🔍 Rechercher..." oninput="filterDep()" style="padding:7px 12px;border:1.5px solid var(--ligne);border-radius:8px;background:var(--carte);color:var(--txt-1);width:160px;font-size:12px">
+    <select id="fil-dep-cat" onchange="filterDep()" style="padding:7px 10px;border:1.5px solid var(--ligne);border-radius:8px;background:var(--carte);color:var(--txt-1);font-size:12px;min-width:130px">
+      <option value="">Toutes catégories</option>
+      ${_depCats.map(c=>`<option>${esc(c)}</option>`).join("")}
+    </select>
+    <select id="fil-dep-st" onchange="filterDep()" style="padding:7px 10px;border:1.5px solid var(--ligne);border-radius:8px;background:var(--carte);color:var(--txt-1);font-size:12px">
+      <option value="">Tous statuts</option>
+      <option value="payee">Payée</option>
+      <option value="en_attente">En attente</option>
+      <option value="impayee">Impayée</option>
+    </select>
+    <button class="btn" onclick="exportExcel('depenses')" style="border-color:#1D6F42;color:#1D6F42">📊 Excel</button>
+    ${wr("depenses")?`<button class="btn btn-primary" onclick="openDepense()">+ Nouvelle dépense</button>`:""}
+  ` ;
 
   $("#view").innerHTML=`
   <div class="grid kpis" style="margin-bottom:16px">
@@ -829,6 +839,10 @@ function renderDepList(){
   const dev=DB.settings.devise||"F CFA";
   const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
   const fmtD=s=>s?new Date(s).toLocaleDateString("fr-FR"):"—";
+  const _q=(document.getElementById("srch-dep")?.value||window._depSrch||"").toLowerCase();
+  const _cat=document.getElementById("fil-dep-cat")?.value||window._depCat||"";
+  const _st=document.getElementById("fil-dep-st")?.value||window._depSt||"";
+  if(document.getElementById("srch-dep")){window._depSrch=document.getElementById("srch-dep").value;}
   const cat=document.getElementById("fil-dep-cat")?.value||"";
   const st =document.getElementById("fil-dep-st")?.value||"";
   const stPill={payee:`<span class="pill p-green"><span class="dot"></span>Payée</span>`,
@@ -967,7 +981,12 @@ function viewCrh(){
 
   $("#pg-title").textContent="Ressources Humaines";
   $("#pg-sub").textContent=`${actifs.length} employé(s) actif(s) — Masse salariale : ${fmt(masseSal)}/mois`;
-  $("#pg-actions").innerHTML=wr("crh")?`<button class="btn btn-primary" onclick="openEmploye()">+ Ajouter employé</button>`:"";
+  $("#pg-actions").innerHTML=`
+    <button class="btn" onclick="exportCrhExcel()" style="border-color:#1D6F42;color:#1D6F42">📊 Excel</button>
+    ${wr("crh")?`
+    <button class="btn" onclick="openConge()">+ Congé / Absence</button>
+    <button class="btn btn-primary" onclick="openEmploye()">+ Ajouter employé</button>`:""}
+  `;
 
   $("#view").innerHTML=`
   <div class="grid kpis" style="margin-bottom:16px">
@@ -1192,7 +1211,7 @@ const ROUTES={
   compta:{t:"Comptabilité & TVA",render:viewCompta},
   catalogue:{t:"Catalogue produits",render:viewCatalogue},
   users:{t:"Utilisateurs & rôles",render:viewUsers},
-  parametres:{t:"Paramètres",render:viewParametres},
+  parametres:{t:"Paramètres",render:viewParamètres},
   fournisseurs:{t:"Fournisseurs",render:viewFournisseurs},
   fiscalite:{t:"Fiscalité & Obligations",render:viewFiscalite},
   depenses:{t:"Dépenses",render:viewDepenses},
@@ -1332,7 +1351,7 @@ function editClient(id){
     <div class="field"><label>Source</label><select name="source">${sources.map(s=>`<option ${c.source===s?"selected":""}>${s}</option>`).join("")}</select></div>
     <div class="field"><label>Notes</label><textarea name="notes">${esc(c.notes||"")}</textarea></div>
     </form>`,
-    [id?{label:"Supprimer",cls:"btn-danger",fn:`delClient('${id}')`}:null,{label:id?"Enregistrer":"Créer",cls:"btn-primary",fn:`saveClient('${id||""}')`}].filter(Boolean)
+    [id?{label:"Supprimer",cls:"btn-danger",fn:`delClient('${id}')`}:null,{label:id?"💾 Enregistrer":"Créer",cls:"btn-primary",fn:`saveClient('${id||""}')`}].filter(Boolean)
   );
 }
 function saveClient(id){
@@ -1406,7 +1425,7 @@ function payModal(id){
     <div class="field"><label>Montant (F CFA)</label><input name="montant" type="number" value="${reste}" min="1" required></div>
     <div class="field"><label>Mode</label><select name="mode"><option>Virement</option><option>Espèces</option><option>Chèque</option><option>Mobile Money</option></select></div>
     </div><div class="field"><label>Date</label><input name="date" type="date" value="${todayISO()}"></div></form>`,
-    [{label:"Annuler",fn:"closeModal()"},{label:"Enregistrer",cls:"btn-primary",fn:`doPay('${id}')`}]);
+    [{label:"Annuler",fn:"closeModal()"},{label:"💾 Enregistrer",cls:"btn-primary",fn:`doPay('${id}')`}]);
 }
 function doPay(id){
   if(!guard("factures"))return;
@@ -1445,7 +1464,7 @@ function editDoc(kind,id){
     <div class="kv-block" id="doc-totals" style="margin-top:12px">${docTotalsHTML(totals,doc.tva)}</div>
     <div class="field"><label>Notes</label><textarea name="notes">${esc(doc.notes||"")}</textarea></div>
     </form>`,
-    [id?{label:"Supprimer",cls:"btn-danger",fn:`delDoc('${kind}','${id}')`}:null,{label:id?"Enregistrer":(isF?"Créer la facture":"Créer le devis"),cls:"btn-primary",fn:`saveDoc()`}].filter(Boolean)
+    [id?{label:"Supprimer",cls:"btn-danger",fn:`delDoc('${kind}','${id}')`}:null,{label:id?"💾 Enregistrer":(isF?"Créer la facture":"Créer le devis"),cls:"btn-primary",fn:`saveDoc()`}].filter(Boolean)
   );
 }
 function docTotalsHTML(t,tva){return`${kv("Montant HT",fcfa(t.montantHT))}${kv("TVA "+tva+"%",fcfa(t.montantTVA))}${kv("<strong>Total TTC</strong>","<strong class='tabnum'>"+fcfa(t.montantTTC)+"</strong>")}`}
@@ -1821,7 +1840,7 @@ function editCmd(id){
     </div>
     <div class="field"><label>Devis associé (optionnel)</label><select name="devisId"><option value="">— Aucun —</option>${devisOpts}</select></div>
     <div class="field"><label>Notes</label><textarea name="notes">${esc(c.notes||"")}</textarea></div></form>`,
-    [id?{label:"Supprimer",cls:"btn-danger",fn:`delCmd('${id}')`}:null,{label:id?"Enregistrer":"Créer",cls:"btn-primary",fn:`saveCmd('${id||""}')`}].filter(Boolean)
+    [id?{label:"Supprimer",cls:"btn-danger",fn:`delCmd('${id}')`}:null,{label:id?"💾 Enregistrer":"Créer",cls:"btn-primary",fn:`saveCmd('${id||""}')`}].filter(Boolean)
   );
 }
 function saveCmd(id){
@@ -1837,9 +1856,15 @@ function delCmd(id){if(!guard("commandes"))return;confirmModal("Supprimer cette 
 /* ============================================================
    PARAMÈTRES
    ============================================================ */
-function viewParametres(){
+function viewParamètres(){
   if(!vis("parametres"))return;
   const c=DB.settings.company||{}; const s=DB.settings;
+  $("#pg-title").textContent="Paramètres";
+  $("#pg-actions").innerHTML=`
+    <label class="btn" style="cursor:pointer">Importer<input type="file" accept=".json" style="display:none" onchange="importData(this)"></label>
+    <button class="btn" onclick="exportData()">Exporter (.json)</button>
+    <button class="btn btn-primary" onclick="saveSettings()">Enregistrer</button>
+  `;
   const fi=(k,v,t="text")=>`<input name="${k}" value="${esc(v||"")}" type="${t}">`;
   $("#view").innerHTML=`<div class="card panel"><div class="panel-h"><h3>Identité de la société</h3></div>
     <form id="f-set">
@@ -2159,7 +2184,7 @@ function editUser(id){
     </div>
     <div class="field"><label>Statut</label><select name="active"><option value="1" ${u.active!==false?"selected":""}>Actif</option><option value="0" ${u.active===false?"selected":""}>Inactif</option></select></div>
   </form>`,
-  [(id&&u.id!==USER.id)?{label:"Supprimer",cls:"btn-danger",fn:`delUser('${id}')`}:null,{label:id?"Enregistrer":"Créer le compte",cls:"btn-primary",fn:`saveUser('${id||""}')`}].filter(Boolean));
+  [(id&&u.id!==USER.id)?{label:"Supprimer",cls:"btn-danger",fn:`delUser('${id}')`}:null,{label:id?"💾 Enregistrer":"Créer le compte",cls:"btn-primary",fn:`saveUser('${id||""}')`}].filter(Boolean));
 }
 function adminCount(){return DB.users.filter(u=>(u.roleId||u.role_id)==="administrateur"&&u.active!==false).length}
 async function saveUser(id){
@@ -2203,7 +2228,7 @@ function editRole(id){
       <div class="wgrid">${WIDGETS.map(w=>`<label class="wopt"><input type="checkbox" name="w_${w.k}" ${(r.widgets||[]).includes(w.k)?"checked":""}> ${w.label}</label>`).join("")}</div>
     </div>
   </form>`,
-  [(id&&!r.system)?{label:"Supprimer",cls:"btn-danger",fn:`delRole('${id}')`}:null,{label:id?"Enregistrer":"Créer",cls:"btn-primary",fn:`saveRole('${id||""}')`}].filter(Boolean));
+  [(id&&!r.system)?{label:"Supprimer",cls:"btn-danger",fn:`delRole('${id}')`}:null,{label:id?"💾 Enregistrer":"Créer",cls:"btn-primary",fn:`saveRole('${id||""}')`}].filter(Boolean));
 }
 function saveRole(id){
   const f=$("#f-role");const fd=new FormData(f);const name=fd.get("name")?.trim()||"";if(!name){toast("Nom obligatoire");return}
@@ -2261,6 +2286,70 @@ document.querySelectorAll("#nav a").forEach(a=>a.addEventListener("click",()=>go
 /* ============================================================
    BOOT ASYNC
    ============================================================ */
+/* ── Dépenses : filtre live depuis pg-actions ──────────────────── */
+function filterDep(){
+  const q=(document.getElementById("srch-dep")?.value||"").toLowerCase();
+  const cat=document.getElementById("fil-dep-cat")?.value||"";
+  const st=document.getElementById("fil-dep-st")?.value||"";
+  window._depSrch=q; window._depCat=cat; window._depSt=st;
+  renderDepList();
+}
+
+/* ── Caisses : export Excel ─────────────────────────────────────── */
+function exportCaisseExcel(){
+  if(typeof XLSX==="undefined"){toast("Module Excel non chargé");return;}
+  const dev=DB.settings.devise||"F CFA";
+  const co=DB.settings.company||{};
+  const caisses=DB.caisses||[];
+  const mvts=DB.caisseMvt||[];
+  const wb=XLSX.utils.book_new();
+  // Feuille par caisse
+  caisses.forEach(c=>{
+    const rows=mvts.filter(m=>m.caisse_id===c.id)
+      .sort((a,b)=>new Date(a.date||0)-new Date(b.date||0))
+      .map(m=>({
+        "Date":m.date?new Date(m.date).toLocaleDateString("fr-FR"):"—",
+        "Type":m.type_mvt==="entree"?"Entrée":"Sortie",
+        "Libellé":m.libelle||"",
+        "Catégorie":m.categorie||"",
+        "Montant":m.type_mvt==="entree"?+m.montant:-+m.montant,
+        "Solde après":+m.solde_apres||0,
+        "Référence":m.reference||"",
+      }));
+    const ws=XLSX.utils.json_to_sheet(rows.length?rows:[{"(vide)":"Aucun mouvement"}]);
+    ws["!cols"]=[{wch:12},{wch:8},{wch:30},{wch:16},{wch:14},{wch:14},{wch:16}];
+    XLSX.utils.book_append_sheet(wb,ws,(c.nom||"Caisse").slice(0,31));
+  });
+  XLSX.writeFile(wb,`Caisses_${todayISO()}.xlsx`);
+  toast("Export caisses téléchargé");
+}
+
+/* ── CRH : export Excel employés ───────────────────────────────── */
+function exportCrhExcel(){
+  if(typeof XLSX==="undefined"){toast("Module Excel non chargé");return;}
+  const wb=XLSX.utils.book_new();
+  const wsEmp=XLSX.utils.json_to_sheet((DB.employes||[]).map(e=>({
+    "Nom":e.nom||"","Prénom":e.prenom||"","Poste":e.poste||"",
+    "Département":e.departement||"","Contrat":e.type_contrat||"",
+    "Statut":e.statut||"","Salaire brut":+e.salaire_brut||0,
+    "Date embauche":e.date_embauche||"","N° CNPS":e.cnps_number||"",
+    "Email":e.email||"","Tél":e.tel||"",
+  })));
+  wsEmp["!cols"]=[{wch:16},{wch:16},{wch:22},{wch:16},{wch:12},{wch:10},{wch:14},{wch:14},{wch:16},{wch:26},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,wsEmp,"Employés");
+  if((DB.conges||[]).length){
+    const wsCg=XLSX.utils.json_to_sheet(DB.conges.map(c=>{
+      const e=(DB.employes||[]).find(x=>x.id===c.employe_id)||{};
+      return{"Employé":`${e.nom||""} ${e.prenom||""}`.trim(),"Type":c.type_conge||"",
+        "Début":c.date_debut||"","Fin":c.date_fin||"","Statut":c.statut||"","Motif":c.motif||""};
+    }));
+    XLSX.utils.book_append_sheet(wb,wsCg,"Congés");
+  }
+  XLSX.writeFile(wb,`RH_Creatis_${todayISO()}.xlsx`);
+  toast("Export RH téléchargé");
+}
+
+
 let _pwaPrompt=null;
 window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();_pwaPrompt=e;const b=document.getElementById("pwa-install-btn");if(b)b.style.display="flex";});
 function installPWA(){
@@ -2364,7 +2453,7 @@ function editFournisseur(id){
     <div class="field"><label>Statut</label><select name="actif"><option value="1" ${f.actif!==false?"selected":""}>Actif</option><option value="0" ${f.actif===false?"selected":""}>Inactif</option></select></div>
     </form>`,
     [id?{label:"Supprimer",cls:"btn-danger",fn:`delFournisseur('${id}')`}:null,
-     {label:id?"Enregistrer":"Créer",cls:"btn-primary",fn:`saveFournisseur('${id||""}')`}].filter(Boolean)
+     {label:id?"💾 Enregistrer":"Créer",cls:"btn-primary",fn:`saveFournisseur('${id||""}')`}].filter(Boolean)
   );
 }
 function saveFournisseur(id){
@@ -2485,7 +2574,7 @@ function editProduct(id){
       <select name="fournisseurId"><option value="">— Aucun —</option>${foOpts}</select></div>
     </form>`,
     [id?{label:"Supprimer",cls:"btn-danger",fn:`delProduct('${id}')`}:null,
-     {label:id?"Enregistrer":"Ajouter",cls:"btn-primary",fn:`saveProduct('${id||""}')`}].filter(Boolean)
+     {label:id?"💾 Enregistrer":"Ajouter",cls:"btn-primary",fn:`saveProduct('${id||""}')`}].filter(Boolean)
   );
   setTimeout(calcMargePrev,50);
 }
@@ -2528,10 +2617,11 @@ function viewCompta(){
   $("#pg-title").textContent="Comptabilité";
   $("#pg-sub").textContent="Exercice "+y+" — SYSCOHADA · Régime Réel Simplifié";
   $("#pg-actions").innerHTML=`
-    <button class="btn btn-primary act-edit" onclick="editDepense()">+ Dépense</button>
-    <button class="btn" onclick="openSaisieCompta()" style="border-color:var(--cyan);color:var(--cyan)">✏️ Écriture</button>
-    <button class="btn" onclick="openBalance()" style="border-color:var(--mag);color:var(--mag)">⚖️ Balance</button>
-    <button class="btn" style="border-color:#1D6F42;color:#1D6F42" onclick="exportExcel('depenses')">📊 Excel</button>`;
+    <button class="btn" style="border-color:#1D6F42;color:#1D6F42" onclick="exportExcel('depenses')">📊 Excel</button>
+    <button class="btn" onclick="openBalance()" style="border-color:var(--mag);color:var(--mag)">Balance</button>
+    <button class="btn" onclick="openSaisieCompta()" style="border-color:var(--cyan);color:var(--cyan)">✏️ Écriture OD</button>
+    ${wr("compta")?`<button class="btn btn-primary act-edit" onclick="editDepense()">+ Dépense</button>`:""}
+  `;
 
   const tabs=[
     {k:"saisie",l:"📝 Journal de saisie"},
@@ -2620,7 +2710,7 @@ function editDepense(id){
       <div class="field"><label>Total TTC (F)</label><input name="ttc" id="dep-ttc" type="number" value="${d.ttc||0}" min="0"></div>
     </div></form>`,
     [id?{label:"Supprimer",cls:"btn-danger",fn:`delDepense('${id}')`}:null,
-     {label:id?"Enregistrer":"Ajouter",cls:"btn-primary",fn:`saveDepense('${id||""}')`}].filter(Boolean)
+     {label:id?"💾 Enregistrer":"Ajouter",cls:"btn-primary",fn:`saveDepense('${id||""}')`}].filter(Boolean)
   );
 }
 
@@ -3100,9 +3190,12 @@ function viewCaisses(){
 
   $("#pg-title").textContent="Caisses & Trésorerie";
   $("#pg-sub").textContent=`${caisses.length} compte(s) — Trésorerie totale : ${fmt(tresoTotale)}`;
-  $("#pg-actions").innerHTML=wr("caisses")?`
-    <button class="btn btn-primary" onclick="openMvtCaisse()">+ Mouvement</button>
-    <button class="btn" onclick="openCaisse()">+ Nouvelle caisse</button>`:"";
+  $("#pg-actions").innerHTML=`
+    <button class="btn" onclick="exportCaisseExcel()" style="border-color:#1D6F42;color:#1D6F42">📊 Excel</button>
+    ${wr("caisses")?`
+    <button class="btn" onclick="openCaisse()">+ Nouvelle caisse</button>
+    <button class="btn btn-primary" onclick="openMvtCaisse()">+ Mouvement</button>`:""}
+  `;
 
   $("#view").innerHTML=`
   <!-- Cartes caisses -->
@@ -3828,7 +3921,7 @@ function exportBalanceExcel(){
   ];
   const ws=XLSX.utils.aoa_to_sheet(rows);
   ws["!cols"]=[{wch:12},{wch:40},{wch:18},{wch:18},{wch:18},{wch:18}];
-  XLSX.utils.book_append_sheet(wb,ws,"Balance");
+  XLSX.utils.book_append_sheet(wb,ws,"⚖️ Balance");
   XLSX.writeFile(wb,`Balance_${co.name||"CRM"}_${new Date().toISOString().slice(0,10)}.xlsx`);
   toast("✅ Balance exportée en Excel");
 }
@@ -4149,7 +4242,7 @@ function viewInfographistes(){
   $("#pg-title").textContent = "Suivi infographistes";
   $("#pg-sub").textContent   = `${actives.length} projet(s) actif(s) · ${nonAssignees.length} non assigné(s)`;
   $("#pg-actions").innerHTML = `
-    <button class="btn" onclick="go('commandes')">📋 Voir le Kanban</button>
+    ${vis("production")?`<button class="btn" onclick="go('production')" style="border-color:var(--cyan);color:var(--cyan)">Atelier</button>`:""}
     <button class="btn btn-primary act-edit" onclick="editCmd()">+ Nouvelle commande</button>`;
 
   // KPIs globaux
@@ -4779,8 +4872,9 @@ function viewProduction(){
   $("#pg-title").textContent = "Atelier & Production";
   $("#pg-sub").textContent   = `${actives.length} commande(s) en cours · ${etapesEnCours} étape(s) active(s)`;
   $("#pg-actions").innerHTML = `
-    <button class="btn" onclick="openNouvelleEtape()" style="border-color:var(--cyan);color:var(--cyan)">➕ Nouvelle étape</button>
-    ${wr("production")?`<button class="btn btn-primary" onclick="initEtapesCommande()">⚡ Init. production</button>`:""}`;
+    ${wr("production")?`<button class="btn" onclick="initEtapesCommande()" style="border-color:var(--txt-2);color:var(--txt-2)">⚡ Init.</button>`:""}
+    <button class="btn btn-primary" onclick="openNouvelleEtape()">➕ Nouvelle étape</button>
+  `;
 
   const tabs=[
     {k:"kanban",label:"🏭 Kanban atelier"},
