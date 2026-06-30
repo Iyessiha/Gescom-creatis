@@ -2622,143 +2622,259 @@ function editDepense(id){
    ============================================================ */
 function viewEntrepot(){
   if(!vis("entrepot"))return;
-  const dev=DB.settings.devise||"F CFA";
-  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
-  const fmtD=s=>s?new Date(s).toLocaleDateString("fr-FR"):"—";
-
-  // KPIs stock
+  window._entrepotTab = window._entrepotTab||"stock";
+  const dev = DB.settings.devise||"F CFA";
+  const fmt = n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
   const prods = DB.products||[];
-  const enAlerte   = prods.filter(p=>(p.stock_actuel||0)<=(p.stock_minimum||0)&&(p.stock_minimum||0)>0);
+  const enAlerte   = prods.filter(p=>(p.stock_actuel||0)<=(p.stock_minimum||p.stock_min||0)&&(p.stock_minimum||p.stock_min||0)>0);
   const valeurStock = prods.reduce((s,p)=>s+(+p.stock_actuel||0)*(+p.prix_achat||+p.pu||0),0);
   const totalMvt    = (DB.stockMvt||[]).length;
 
-  const mvtPill={
-    entree: `<span class="pill p-green"  style="font-size:10px"><span class="dot"></span>Entrée</span>`,
-    sortie: `<span class="pill p-red"    style="font-size:10px"><span class="dot"></span>Sortie</span>`,
-    ajustement:`<span class="pill p-amber" style="font-size:10px"><span class="dot"></span>Ajustement</span>`,
-    inventaire:`<span class="pill p-cyan"  style="font-size:10px"><span class="dot"></span>Inventaire</span>`,
-  };
-  const motifLabel={achat:"🛒 Achat",vente:"🧾 Vente",perte:"❌ Perte",
-    retour:"↩️ Retour",transfert:"🔄 Transfert",inventaire:"📋 Inventaire",ajustement:"⚙️ Ajustement"};
+  $("#pg-title").textContent = "Entrepôt & Stock";
+  $("#pg-sub").textContent   = `${prods.length} produits · Valeur stock : ${fmt(valeurStock)}`;
+  $("#pg-actions").innerHTML = wr("entrepot")?`
+    <button class="btn btn-primary" onclick="openMvtStock()">+ Mouvement</button>
+    <button class="btn" onclick="openInventaire()" style="border-color:var(--mag);color:var(--mag)">📋 Inventaire physique</button>`:"";
 
-  $("#pg-title").textContent="Entrepôt & Stock";
-  $("#pg-sub").textContent=`${prods.length} produits — Valeur stock : ${fmt(valeurStock)}`;
-  $("#pg-actions").innerHTML=wr("entrepot")?`
-    <button class="btn btn-primary" onclick="openMvtStock()">+ Mouvement de stock</button>
-    <button class="btn" onclick="openInventaire()">📋 Inventaire</button>`:""
+  const tabs=[
+    {k:"stock",      l:"📦 Stock actuel"},
+    {k:"mouvements", l:"🔄 Mouvements"},
+    {k:"alertes",    l:`⚠️ Alertes${enAlerte.length?` <span style="background:var(--danger);color:#fff;border-radius:10px;padding:0 6px;font-size:10px">${enAlerte.length}</span>`:""}` },
+    {k:"inventaire", l:"📋 Inventaire"},
+  ];
 
   $("#view").innerHTML=`
-  <div class="grid kpis" style="margin-bottom:16px">
+  <!-- KPIs -->
+  <div class="grid kpis" style="margin-bottom:14px">
     <div class="card kpi c-cyan"><span class="tick"></span>
-      <div class="lab">Produits en catalogue</div>
-      <div class="val">${prods.length}</div>
-      <div class="delta">${prods.filter(p=>(p.stock_actuel||0)>0).length} en stock</div></div>
+      <div class="lab">Produits en stock</div>
+      <div class="val">${prods.filter(p=>(p.stock_actuel||0)>0).length} / ${prods.length}</div></div>
     <div class="card kpi c-jaune"><span class="tick"></span>
-      <div class="lab">Valeur du stock</div>
-      <div class="val tabnum">${fmt(valeurStock)}</div>
-      <div class="delta">Prix d'achat × quantités</div></div>
+      <div class="lab">Valeur totale</div>
+      <div class="val tabnum" style="font-size:18px">${fmt(valeurStock)}</div></div>
     <div class="card kpi ${enAlerte.length?"c-rouge":"c-noir"}"><span class="tick"></span>
       <div class="lab">Alertes stock bas</div>
-      <div class="val" style="color:${enAlerte.length?"var(--danger)":"inherit"}">${enAlerte.length}</div>
-      <div class="delta">${enAlerte.length?"Produits sous le minimum":""}</div></div>
+      <div class="val" style="color:${enAlerte.length?"var(--danger)":"inherit"}">${enAlerte.length}</div></div>
     <div class="card kpi c-mag"><span class="tick"></span>
-      <div class="lab">Mouvements enregistrés</div>
-      <div class="val">${totalMvt}</div>
-      <div class="delta">Entrées, sorties, ajustements</div></div>
+      <div class="lab">Mouvements</div>
+      <div class="val">${totalMvt}</div></div>
   </div>
 
-  <div class="two-13" style="margin-bottom:14px">
-
-    <!-- Niveaux de stock -->
-    <div class="card panel">
-      <div class="panel-h">
-        <h3>📦 Niveaux de stock</h3><div class="spacer"></div>
-        <select id="fil-stock-cat" onchange="renderStockList()" style="width:160px">
-          <option value="">Toutes catégories</option>
-          ${[...new Set(prods.map(p=>p.categorie).filter(Boolean))].map(c=>`<option>${c}</option>`).join("")}
-        </select>
-        <select id="fil-stock-alerte" onchange="renderStockList()" style="width:140px">
-          <option value="">Tous</option>
-          <option value="alerte">⚠️ Alerte uniquement</option>
-          <option value="ok">✅ OK uniquement</option>
-        </select>
-      </div>
-      <div id="stock-list"></div>
-    </div>
-
-    <!-- Colonne droite -->
-    <div style="display:flex;flex-direction:column;gap:14px">
-
-      <!-- Alertes -->
-      ${enAlerte.length?`
-      <div class="card panel" style="border-left:3px solid var(--danger)">
-        <div class="panel-h"><h3>⚠️ Alertes stock</h3></div>
-        ${enAlerte.slice(0,8).map(p=>`
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--ligne);font-size:12px">
-            <div>
-              <div style="font-weight:600">${esc(p.designation||"")}</div>
-              <div class="meta">${esc(p.reference||p.categorie||"")}</div>
-            </div>
-            <div style="text-align:right">
-              <div style="font-weight:700;color:var(--danger)">${p.stock_actuel||0} / min ${p.stock_minimum||0}</div>
-            </div>
-          </div>`).join("")}
-      </div>`:`
-      <div class="card panel">
-        <div class="panel-h"><h3>✅ Stock en ordre</h3></div>
-        <div class="meta" style="padding:8px 0">Aucun produit sous le seuil minimum</div>
-      </div>`}
-
-      <!-- Derniers mouvements -->
-      <div class="card panel">
-        <div class="panel-h"><h3>🔄 Derniers mouvements</h3><div class="spacer"></div>
-          ${wr("entrepot")?`<button class="btn btn-sm" onclick="openMvtStock()">+</button>`:""}
-        </div>
-        ${(DB.stockMvt||[]).length===0?`<div class="empty">Aucun mouvement enregistré</div>`:""}
-        ${(DB.stockMvt||[]).slice().sort((a,b)=>new Date(b.date||0)-new Date(a.date||0))
-          .slice(0,8).map(m=>`
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--ligne)">
-            <div style="display:flex;align-items:center;gap:8px">
-              ${mvtPill[m.type_mvt]||""}
-              <div>
-                <div style="font-size:12px;font-weight:600">${esc(m.produit_nom||"—")}</div>
-                <div class="meta">${fmtD(m.date)} — ${esc(motifLabel[m.motif]||m.motif||"")}</div>
-              </div>
-            </div>
-            <div style="text-align:right">
-              <div style="font-size:13px;font-weight:700;color:${m.type_mvt==="entree"?"var(--ok)":"var(--danger)"}">
-                ${m.type_mvt==="entree"?"+":"−"}${m.quantite}
-              </div>
-              <div class="meta">→ ${m.stock_apres}</div>
-            </div>
-          </div>`).join("")}
-      </div>
-    </div>
+  <!-- Onglets -->
+  <div style="display:flex;gap:2px;border-bottom:2px solid var(--ligne);margin-bottom:0">
+    ${tabs.map(t=>`<button onclick="switchEntrepotTab('${t.k}')" id="etab-${t.k}"
+      style="padding:8px 16px;border:none;border-radius:6px 6px 0 0;cursor:pointer;font-size:12px;font-weight:600;
+      background:${window._entrepotTab===t.k?"var(--carte)":"transparent"};
+      color:${window._entrepotTab===t.k?"var(--cyan)":"var(--txt-2)"};
+      border-bottom:${window._entrepotTab===t.k?"3px solid var(--cyan)":"3px solid transparent"};
+      margin-bottom:-2px">${t.l}</button>`).join("")}
   </div>
+  <div id="entrepot-tab-content" style="padding-top:14px"></div>`;
 
-  <!-- Historique complet -->
+  renderEntrepotTab();
+}
+
+function switchEntrepotTab(tab){
+  window._entrepotTab=tab;
+  document.querySelectorAll("[id^='etab-']").forEach(b=>{
+    const k=b.id.replace("etab-",""), a=k===tab;
+    b.style.background=a?"var(--carte)":"transparent";
+    b.style.color=a?"var(--cyan)":"var(--txt-2)";
+    b.style.borderBottom=a?"3px solid var(--cyan)":"3px solid transparent";
+  });
+  renderEntrepotTab();
+}
+
+function renderEntrepotTab(){
+  const tab=window._entrepotTab||"stock";
+  const el=document.getElementById("entrepot-tab-content"); if(!el)return;
+  if(tab==="stock")      renderOngletStock(el);
+  else if(tab==="mouvements") renderOngletMouvements(el);
+  else if(tab==="alertes")    renderOngletAlertes(el);
+  else if(tab==="inventaire") renderOngletInventaire(el);
+}
+
+function renderOngletStock(el){
+  const dev=DB.settings.devise||"F CFA";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
+  const prods=DB.products||[];
+  const cats=[...new Set(prods.map(p=>p.categorie).filter(Boolean))].sort();
+  const cat=window._entropCat||"";
+  const alerte=window._entropAlerte||"";
+
+  el.innerHTML=`
   <div class="card panel">
-    <div class="panel-h"><h3>📋 Historique des mouvements</h3><div class="spacer"></div>
-      <select id="fil-mvt-type" onchange="renderMvtList()" style="width:150px">
-        <option value="">Tous types</option>
-        <option value="entree">Entrées</option>
-        <option value="sortie">Sorties</option>
-        <option value="ajustement">Ajustements</option>
-        <option value="inventaire">Inventaires</option>
+    <div class="panel-h">
+      <h3>Niveaux de stock</h3><div class="spacer"></div>
+      <input id="srch-stock" placeholder="🔍 Rechercher..." oninput="renderStockList()" value="${window._entropSrch||""}"
+        style="padding:7px 12px;border:1.5px solid var(--ligne);border-radius:8px;background:var(--carte);color:var(--txt-1);width:180px;font-size:12px">
+      <select id="fil-stock-cat" onchange="window._entropCat=this.value;renderStockList()" style="width:150px">
+        <option value="">Toutes catégories</option>
+        ${cats.map(c=>`<option value="${c}" ${c===cat?"selected":""}>${c}</option>`).join("")}
       </select>
+      <select id="fil-stock-alerte" onchange="window._entropAlerte=this.value;renderStockList()" style="width:140px">
+        <option value="">Tous</option>
+        <option value="alerte" ${alerte==="alerte"?"selected":""}>⚠️ Alertes</option>
+        <option value="ok" ${alerte==="ok"?"selected":""}>✅ OK</option>
+        <option value="vide" ${alerte==="vide"?"selected":""}>📭 Vide</option>
+      </select>
+    </div>
+    <div id="stock-list"></div>
+  </div>`;
+  renderStockList();
+}
+
+function renderOngletMouvements(el){
+  const type=window._entropType||"";
+  el.innerHTML=`
+  <div class="card panel">
+    <div class="panel-h">
+      <h3>Historique des mouvements</h3><div class="spacer"></div>
+      <select id="fil-mvt-type" onchange="window._entropType=this.value;renderMvtList()" style="width:160px">
+        <option value="" ${!type?"selected":""}>Tous types</option>
+        <option value="entree"  ${type==="entree"?"selected":""}>📥 Entrées</option>
+        <option value="sortie"  ${type==="sortie"?"selected":""}>📤 Sorties</option>
+        <option value="ajustement" ${type==="ajustement"?"selected":""}>⚙️ Ajustements</option>
+        <option value="inventaire" ${type==="inventaire"?"selected":""}>📋 Inventaires</option>
+      </select>
+      ${wr("entrepot")?`<button class="btn btn-primary" onclick="openMvtStock()">+ Mouvement</button>`:""}
     </div>
     <div id="mvt-list"></div>
   </div>`;
-
-  renderStockList();
   renderMvtList();
 }
 
+function renderOngletAlertes(el){
+  const dev=DB.settings.devise||"F CFA";
+  const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
+  const prods=DB.products||[];
+  const enAlerte=prods.filter(p=>(p.stock_actuel||0)<=(p.stock_minimum||p.stock_min||0)&&(p.stock_minimum||p.stock_min||0)>0);
+  const vides=prods.filter(p=>(p.stock_actuel||0)===0&&(!p.stock_minimum&&!p.stock_min));
+
+  el.innerHTML=`
+  ${enAlerte.length===0&&vides.length===0?`
+  <div class="card panel">
+    <div style="padding:32px;text-align:center">
+      <div style="font-size:40px;margin-bottom:8px">✅</div>
+      <div style="font-size:15px;font-weight:700">Tous les stocks sont en ordre</div>
+      <div class="meta">Aucun produit sous le seuil minimum</div>
+    </div>
+  </div>`:""}
+
+  ${enAlerte.length?`
+  <div class="card panel" style="border-left:3px solid var(--danger);margin-bottom:14px">
+    <div class="panel-h">
+      <h3 style="color:var(--danger)">⚠️ Produits sous le seuil minimum (${enAlerte.length})</h3>
+    </div>
+    <div style="overflow-x:auto"><table style="font-size:12px"><thead><tr>
+      <th>Produit</th><th>Référence</th><th>Catégorie</th>
+      <th class="r">Stock actuel</th><th class="r">Seuil min.</th><th class="r">Manque</th><th class="r">Valeur</th><th></th>
+    </tr></thead><tbody>
+    ${enAlerte.sort((a,b)=>(a.stock_actuel||0)-(b.stock_actuel||0)).map(p=>{
+      const manque=(p.stock_minimum||p.stock_min||0)-(p.stock_actuel||0);
+      const val=(p.stock_actuel||0)*(+p.prix_achat||+p.pu||0);
+      return`<tr>
+        <td><div class="nm">${esc(p.designation||p.nom||"")}</div></td>
+        <td class="meta">${esc(p.reference||"—")}</td>
+        <td><span class="pill p-grey" style="font-size:10px">${esc(p.categorie||"—")}</span></td>
+        <td class="r tabnum" style="color:var(--danger);font-weight:700">${p.stock_actuel||0}</td>
+        <td class="r tabnum">${p.stock_minimum||p.stock_min||0}</td>
+        <td class="r tabnum" style="color:var(--warn);font-weight:600">${manque}</td>
+        <td class="r tabnum meta">${val?fmt(val):"—"}</td>
+        <td>${wr("entrepot")?`<button class="btn btn-sm btn-primary" onclick="openMvtStock('${p.id}')">Commander</button>`:""}
+        </td>
+      </tr>`;
+    }).join("")}
+    </tbody></table></div>
+  </div>`:""}
+
+  ${vides.length?`
+  <div class="card panel" style="border-left:3px solid var(--txt-3)">
+    <div class="panel-h"><h3 style="color:var(--txt-2)">📭 Produits à stock zéro (${vides.length})</h3></div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;padding-top:6px">
+    ${vides.slice(0,20).map(p=>`
+      <div style="padding:6px 12px;border-radius:6px;border:1px solid var(--ligne);font-size:11px">
+        <div style="font-weight:600">${esc(p.designation||p.nom||"")}</div>
+        <div class="meta">${esc(p.reference||p.categorie||"—")}</div>
+      </div>`).join("")}
+    </div>
+  </div>`:""}`;
+}
+
+function renderOngletInventaire(el){
+  const prods=DB.products||[];
+  const lastInv=(DB.stockMvt||[]).filter(m=>m.type_mvt==="inventaire")
+    .sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+  const lastDate=lastInv[0]?.date;
+
+  el.innerHTML=`
+  <div class="card panel" style="margin-bottom:14px">
+    <div class="panel-h">
+      <div>
+        <h3>📋 Inventaire physique</h3>
+        ${lastDate?`<div class="meta">Dernier inventaire : ${new Date(lastDate).toLocaleDateString("fr-FR")}</div>`:`<div class="meta">Aucun inventaire effectué</div>`}
+      </div>
+      <div class="spacer"></div>
+      ${wr("entrepot")?`<button class="btn btn-primary" onclick="openInventaire()">Saisir un inventaire</button>`:""}
+    </div>
+    <p style="font-size:12px;color:var(--txt-2);margin-top:8px">
+      L'inventaire physique permet de corriger les quantités réelles en stock en comparant ce que vous avez physiquement
+      avec ce que le système affiche. Chaque correction génère un mouvement de type "Inventaire".
+    </p>
+  </div>
+
+  <!-- Résumé des produits -->
+  <div class="card panel">
+    <div class="panel-h"><h3>État du stock par catégorie</h3></div>
+    ${(()=>{
+      const cats=[...new Set(prods.map(p=>p.categorie||"Sans catégorie"))].sort();
+      return cats.map(cat=>{
+        const items=prods.filter(p=>(p.categorie||"Sans catégorie")===cat);
+        const totalQte=items.reduce((s,p)=>s+(+p.stock_actuel||0),0);
+        const alertes=items.filter(p=>(p.stock_actuel||0)<=(p.stock_minimum||p.stock_min||0)&&(p.stock_minimum||p.stock_min||0)>0).length;
+        return`<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--ligne)">
+          <div style="min-width:160px;font-size:12px;font-weight:600">${esc(cat)}</div>
+          <div style="flex:1;height:8px;background:var(--ligne);border-radius:4px;overflow:hidden">
+            <div style="width:${Math.min(100,totalQte/10)}%;height:100%;background:var(--cyan);border-radius:4px"></div>
+          </div>
+          <div style="font-size:11px;color:var(--txt-2);min-width:80px;text-align:right">${items.length} produit(s)</div>
+          <div style="font-size:11px;font-weight:700;min-width:60px;text-align:right">${totalQte} unités</div>
+          ${alertes?`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:var(--danger)18;color:var(--danger);font-weight:700">⚠️ ${alertes}</span>`:`<span style="font-size:10px;padding:2px 8px;border-radius:10px;background:var(--ok)18;color:var(--ok)">✅</span>`}
+        </div>`;
+      }).join("");
+    })()}
+  </div>
+
+  <!-- Derniers inventaires -->
+  ${lastInv.length?`
+  <div class="card panel" style="margin-top:14px">
+    <div class="panel-h"><h3>Historique des inventaires</h3></div>
+    <table style="font-size:12px"><thead><tr>
+      <th>Date</th><th>Produit</th><th>Qté avant</th><th>Qté après</th><th>Écart</th><th>Note</th>
+    </tr></thead><tbody>
+    ${lastInv.slice(0,20).map(m=>`<tr>
+      <td class="meta">${new Date(m.date||0).toLocaleDateString("fr-FR")}</td>
+      <td><div class="nm">${esc(m.produit_nom||"—")}</div></td>
+      <td class="r tabnum">${m.stock_avant??"-"}</td>
+      <td class="r tabnum">${m.stock_apres??"-"}</td>
+      <td class="r tabnum" style="color:${(m.stock_apres-m.stock_avant)>=0?"var(--ok)":"var(--danger)"};font-weight:700">
+        ${(m.stock_apres-m.stock_avant)>=0?"+":""}${(m.stock_apres||0)-(m.stock_avant||0)}
+      </td>
+      <td class="meta">${esc(m.note||m.notes||"—")}</td>
+    </tr>`).join("")}
+    </tbody></table>
+  </div>`:""}`;
+}
+
+
 function renderStockList(){
-  const cat = document.getElementById("fil-stock-cat")?.value||"";
-  const alerte = document.getElementById("fil-stock-alerte")?.value||"";
+  const cat = document.getElementById("fil-stock-cat")?.value||window._entropCat||"";
+  const alerte = document.getElementById("fil-stock-alerte")?.value||window._entropAlerte||"";
+  const q = (document.getElementById("srch-stock")?.value||window._entropSrch||"").toLowerCase();
+  if(document.getElementById("srch-stock")) window._entropSrch=document.getElementById("srch-stock").value;
   let rows = (DB.products||[]).filter(p=>
     (!cat||p.categorie===cat)&&
+    (!q||(p.designation||p.nom||"").toLowerCase().includes(q)||(p.reference||"").toLowerCase().includes(q))&&
     (!alerte||(alerte==="alerte"?(p.stock_actuel||0)<=(p.stock_minimum||0)&&(p.stock_minimum||0)>0:
                (p.stock_actuel||0)>(p.stock_minimum||0)))
   ).sort((a,b)=>(a.designation||"").localeCompare(b.designation||""));
