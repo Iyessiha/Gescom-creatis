@@ -3327,56 +3327,43 @@ function buildBalanceData(from, to){
 
 function renderBalance(){
   const {from,to} = getBalancePeriod();
-  const d = buildBalanceData(from,to);
   const dev = DB.settings.devise||"F CFA";
-  const fmt = n => Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ");
+  const fmt = n => n?Math.round(n).toLocaleString("fr-FR").replace(/\u202f/g," "):"";
   const fmtD = dt => dt.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric"});
   const co = DB.settings.company||{};
-
-  const soldeC = (deb,cred) => deb>=cred ? [{v:deb-cred,d:true},{v:0,d:false}] : [{v:0,d:true},{v:cred-deb,d:false}];
-  const row = (num,lib,deb,cred) => {
-    const [sd,sc]=soldeC(deb,cred);
-    return `<tr>
-      <td class="tabnum" style="font-size:11px;padding:5px 10px;color:var(--txt-2)">${num}</td>
-      <td style="font-size:12px;padding:5px 10px">${lib}</td>
-      <td class="r tabnum" style="font-size:12px;padding:5px 10px">${deb?fmt(deb):""}</td>
-      <td class="r tabnum" style="font-size:12px;padding:5px 10px">${cred?fmt(cred):""}</td>
-      <td class="r tabnum" style="font-size:12px;padding:5px 10px;color:var(--ok)">${sd.v?fmt(sd.v):""}</td>
-      <td class="r tabnum" style="font-size:12px;padding:5px 10px;color:var(--danger)">${sc.v?fmt(sc.v):""}</td>
-    </tr>`;
-  };
-  const section = (title,color) =>
-    `<tr style="background:${color||"#1A1A1C"}"><td colspan="6" style="padding:7px 10px;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#fff">${title}</td></tr>`;
-
-  // Totaux
-  let totDeb=0,totCred=0;
-  const addTot=(d,c)=>{totDeb+=d;totCred+=c;};
-
-  // Comptes tiers
-  addTot(d.clients_deb,d.clients_cred);
-  addTot(d.fourn_deb,d.fourn_cred);
-  addTot(d.tva_ded,d.tva_coll);
-  // Caisses
-  d.caisses.forEach(c=>{addTot(c.soldeInit+c.deb,c.cred);});
-  // Charges
-  d.charges.forEach(c=>{addTot(c.deb,c.cred);});
-  // Produits
-  addTot(0,d.produits_cred);
-
-  const resultat = d.produits_cred - d.totalCharges;
   const el = document.getElementById("bal-content");
   if(!el) return;
+
+  // Même moteur que l'impression — garantit des chiffres identiques
+  const {rows,sumBD,sumBC,sumGD,sumGC,totD,totC} = buildBalanceRowsSage(from,to);
+
+  const rowsHTML = rows.map(r=>{
+    if(r.type==="subtotal"){
+      return`<tr style="background:var(--papier);border-top:1px solid var(--ligne)">
+        <td></td>
+        <td style="padding:5px 10px;font-size:11.5px;font-weight:700">${esc(r.lib)}</td>
+        <td class="r tabnum" style="padding:5px 10px;font-size:11.5px;font-weight:700">${fmt(r.d)}</td>
+        <td class="r tabnum" style="padding:5px 10px;font-size:11.5px;font-weight:700">${fmt(r.c)}</td>
+      </tr>`;
+    }
+    return`<tr>
+      <td class="tabnum" style="font-size:10.5px;padding:5px 10px;color:var(--txt-2)">${r.compte}</td>
+      <td style="font-size:12px;padding:5px 10px">${esc(r.lib)}</td>
+      <td class="r tabnum" style="font-size:12px;padding:5px 10px">${fmt(r.d)}</td>
+      <td class="r tabnum" style="font-size:12px;padding:5px 10px">${fmt(r.c)}</td>
+    </tr>`;
+  }).join("");
 
   el.innerHTML = `
   <div id="balance-print-area">
     <div style="margin-bottom:12px;padding:10px 14px;background:var(--papier);border-radius:6px;display:flex;justify-content:space-between;align-items:center">
       <div>
         <div style="font-weight:700;font-size:13px">${esc(co.name||"CREATIS STUDIO")}</div>
-        <div style="font-size:11px;color:var(--txt-2)">Balance des comptes — Du ${fmtD(from)} au ${fmtD(to)}</div>
+        <div style="font-size:11px;color:var(--txt-2)">Balance des comptes — Complète — Du ${fmtD(from)} au ${fmtD(to)}</div>
       </div>
       <div style="font-size:11px;color:var(--txt-2);text-align:right">
-        Régime : ${esc(co.regime||"RSI")} — SYSCOHADA simplifié<br>
-        ${esc(co.cc||"")} · ${esc(co.rc||"")}
+        Régime : ${esc(co.regime||"RSI")} — Compatible Sage 100 i7<br>
+        CC ${esc(co.cc||"")} · RC ${esc(co.rc||"")}
       </div>
     </div>
 
@@ -3384,177 +3371,202 @@ function renderBalance(){
     <table style="width:100%;border-collapse:collapse;border:1px solid var(--ligne)">
       <thead>
         <tr style="background:var(--papier)">
-          <th style="padding:7px 10px;font-size:11px;text-align:left;width:60px;border-bottom:2px solid var(--encre)">N° Cpte</th>
-          <th style="padding:7px 10px;font-size:11px;text-align:left;border-bottom:2px solid var(--encre)">Intitulé</th>
+          <th style="padding:7px 10px;font-size:11px;text-align:left;width:90px;border-bottom:2px solid var(--encre)">N° Compte</th>
+          <th style="padding:7px 10px;font-size:11px;text-align:left;border-bottom:2px solid var(--encre)">Intitulé des comptes</th>
           <th style="padding:7px 10px;font-size:11px;text-align:right;width:130px;border-bottom:2px solid var(--encre)">Débit</th>
           <th style="padding:7px 10px;font-size:11px;text-align:right;width:130px;border-bottom:2px solid var(--encre)">Crédit</th>
-          <th style="padding:7px 10px;font-size:11px;text-align:right;width:130px;border-bottom:2px solid var(--encre);color:var(--ok)">Solde D.</th>
-          <th style="padding:7px 10px;font-size:11px;text-align:right;width:130px;border-bottom:2px solid var(--encre);color:var(--danger)">Solde C.</th>
         </tr>
       </thead>
       <tbody>
-        ${section("Classe 4 — Comptes de tiers","#2C3E50")}
-        ${row("41110000","CLIENTS — Créances sur ventes",d.clients_deb,d.clients_cred)}
-        ${row("40110000","FOURNISSEURS — Dettes sur achats",d.fourn_deb,d.fourn_cred)}
-        ${row("44310000","TVA FACTUREE SUR VENTE",d.tva_ded,d.tva_coll)}
-
-        ${section("Classe 5 — Trésorerie","#1A5276")}
-        ${d.caisses.map(c=>row({"especes":"57100000","banque":"52100000","mobile_money":"52100000","cheque":"52100000"}[c.type]||"57100000",
-          c.nom, c.soldeInit+c.deb, c.cred)).join("")}
-
-        ${section("Classe 6 — Charges","#922B21")}
-        ${d.charges.length ? d.charges.map(c=>row(c.compte,c.libelle,c.deb,c.cred)).join("") :
-          `<tr><td colspan="6" style="padding:8px 10px;font-size:11px;color:var(--txt-3)">Aucune charge enregistrée</td></tr>`}
-
-        ${section("Classe 7 — Produits","#1E8449")}
-        ${row("701","Ventes de produits / Prestations",0,d.produits_cred)}
-
-        ${section("Résultat","#7D3C98")}
-        ${resultat>=0
-          ? row("89500000","IMPOT MINIMUM FORFAITAIRE / RESULTAT",0,resultat)
-          : row("129","Résultat déficitaire",Math.abs(resultat),0)}
-
-        <!-- Totaux généraux -->
-        <tr style="background:var(--encre);color:#fff">
-          <td colspan="2" style="padding:9px 10px;font-size:12px;font-weight:700">TOTAL GÉNÉRAL</td>
-          <td class="r tabnum" style="padding:9px 10px;font-size:13px;font-weight:700;color:#FFC400">${fmt(totDeb)}</td>
-          <td class="r tabnum" style="padding:9px 10px;font-size:13px;font-weight:700;color:#FFC400">${fmt(totCred)}</td>
-          <td colspan="2" style="padding:9px 10px;text-align:right;font-size:11px;color:rgba(255,255,255,.5)">
-            ${totDeb===totCred?"✅ Balance équilibrée":"⚠️ Écart : "+fmt(Math.abs(totDeb-totCred))}
-          </td>
-        </tr>
+        ${rowsHTML || `<tr><td colspan="4" style="padding:14px;text-align:center;color:var(--txt-3)">Aucune écriture sur cette période</td></tr>`}
       </tbody>
+      <tfoot>
+        <tr style="border-top:2px solid var(--encre)">
+          <td colspan="2" style="padding:6px 10px;font-size:11.5px;font-style:italic;color:var(--txt-2)">Totaux comptes de bilan</td>
+          <td class="r tabnum" style="padding:6px 10px;font-size:11.5px">${fmt(sumBD)}</td>
+          <td class="r tabnum" style="padding:6px 10px;font-size:11.5px">${fmt(sumBC)}</td>
+        </tr>
+        <tr>
+          <td colspan="2" style="padding:6px 10px;font-size:11.5px;font-style:italic;color:var(--txt-2)">Totaux comptes de gestion</td>
+          <td class="r tabnum" style="padding:6px 10px;font-size:11.5px">${fmt(sumGD)}</td>
+          <td class="r tabnum" style="padding:6px 10px;font-size:11.5px">${fmt(sumGC)}</td>
+        </tr>
+        <tr style="background:var(--encre);color:#fff">
+          <td colspan="2" style="padding:9px 10px;font-size:12px;font-weight:700">Totaux de la balance</td>
+          <td class="r tabnum" style="padding:9px 10px;font-size:13px;font-weight:700;color:#FFC400">${fmt(totD)}</td>
+          <td class="r tabnum" style="padding:9px 10px;font-size:13px;font-weight:700;color:#FFC400">${fmt(totC)}</td>
+        </tr>
+      </tfoot>
     </table>
     </div>
 
-    <!-- Résumé bas de page -->
-    <div style="display:flex;gap:12px;margin-top:14px;flex-wrap:wrap">
-      <div style="flex:1;padding:12px 16px;background:var(--papier);border-radius:8px;min-width:160px">
-        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-2);margin-bottom:4px">Chiffre d'affaires HT</div>
-        <div style="font-size:18px;font-weight:700;font-family:monospace">${fmt(d.produits_cred)} ${dev}</div>
-      </div>
-      <div style="flex:1;padding:12px 16px;background:var(--papier);border-radius:8px;min-width:160px">
-        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-2);margin-bottom:4px">Total charges</div>
-        <div style="font-size:18px;font-weight:700;font-family:monospace">${fmt(d.totalCharges)} ${dev}</div>
-      </div>
-      <div style="flex:1;padding:12px 16px;background:${resultat>=0?"#EFF9F4":"#FDE8E8"};border-radius:8px;border:1px solid ${resultat>=0?"var(--ok)":"var(--danger)"};min-width:160px">
-        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${resultat>=0?"var(--ok)":"var(--danger)"};margin-bottom:4px">Résultat net</div>
-        <div style="font-size:18px;font-weight:700;font-family:monospace;color:${resultat>=0?"var(--ok)":"var(--danger)"}">${resultat>=0?"+":""}${fmt(resultat)} ${dev}</div>
-      </div>
-      <div style="flex:1;padding:12px 16px;background:var(--papier);border-radius:8px;min-width:160px">
-        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--txt-2);margin-bottom:4px">TVA nette due</div>
-        <div style="font-size:18px;font-weight:700;font-family:monospace;color:${d.tva_nette>0?"var(--warn)":"var(--ok)"}">${fmt(d.tva_nette)} ${dev}</div>
-      </div>
+    <div style="margin-top:10px;text-align:center;font-size:11px;font-weight:700;color:${totD===totC?"var(--ok)":"var(--danger)"}">
+      ${totD===totC?"✓ Balance équilibrée — Débit = Crédit":"⚠ Écart : "+fmt(Math.abs(totD-totC))+" "+dev}
     </div>
   </div>`;
+}
+
+
+function buildBalanceRowsSage(from,to){
+  const all=[...buildEcritures()];
+  (DB.journal||[]).forEach(j=>{
+    const d=new Date(j.date||0);
+    if(d<from||d>to)return;
+    all.push({compte:j.compte_num||j.compte||"",compteLib:j.compte_lib||"",debit:+j.debit||0,credit:+j.credit||0});
+  });
+  const cm={};
+  all.forEach(e=>{
+    const n=e.compte||"";if(!n)return;
+    if(!cm[n])cm[n]={lib:e.compteLib||"",d:0,c:0};
+    cm[n].d+=+e.debit||0;cm[n].c+=+e.credit||0;
+  });
+  // Libellé prioritaire = Plan comptable (casse/intitulé exacts Sage)
+  Object.keys(cm).forEach(n=>{
+    const p=(DB.planCompta||[]).find(x=>x.compte===n);
+    if(p) cm[n].lib=p.libelle;
+  });
+
+  const comptes=Object.entries(cm).filter(([,v])=>v.d||v.c).sort((a,b)=>a[0].localeCompare(b[0]));
+
+  // Sous-totaux par classe 60-68 (réplique exacte du comportement Sage observé)
+  const rows=[]; // {type:'detail'|'subtotal', compte, lib, d, c}
+  const sub3={}; // ex: '601' -> {d,c}
+  const sub2={}; // ex: '60'  -> {d,c}
+  let curPrefix2=null, curPrefix3=null;
+
+  const flush3=(prefix3)=>{
+    if(prefix3 && sub3[prefix3]){
+      rows.push({type:"subtotal",compte:prefix3,lib:"TOTAL "+prefix3,d:sub3[prefix3].d,c:sub3[prefix3].c});
+    }
+  };
+
+  for(const [num,v] of comptes){
+    const isCharge8 = num.length===8 && num[0]==="6";
+    if(isCharge8){
+      const p2=num.slice(0,2), p3=num.slice(0,3);
+      if(curPrefix3 && curPrefix3!==p3){ flush3(curPrefix3); }
+      if(curPrefix2 && curPrefix2!==p2){
+        rows.push({type:"subtotal",compte:curPrefix2,lib:"TOTAL "+curPrefix2,d:sub2[curPrefix2].d,c:sub2[curPrefix2].c});
+      }
+      curPrefix2=p2; curPrefix3=p3;
+      sub3[p3]=sub3[p3]||{d:0,c:0}; sub3[p3].d+=v.d; sub3[p3].c+=v.c;
+      sub2[p2]=sub2[p2]||{d:0,c:0}; sub2[p2].d+=v.d; sub2[p2].c+=v.c;
+      rows.push({type:"detail",compte:num,lib:v.lib,d:v.d,c:v.c});
+    } else {
+      if(curPrefix3){ flush3(curPrefix3); curPrefix3=null; }
+      if(curPrefix2){ rows.push({type:"subtotal",compte:curPrefix2,lib:"TOTAL "+curPrefix2,d:sub2[curPrefix2].d,c:sub2[curPrefix2].c}); curPrefix2=null; }
+      rows.push({type:"detail",compte:num,lib:v.lib,d:v.d,c:v.c});
+    }
+  }
+  if(curPrefix3){ flush3(curPrefix3); }
+  if(curPrefix2){ rows.push({type:"subtotal",compte:curPrefix2,lib:"TOTAL "+curPrefix2,d:sub2[curPrefix2].d,c:sub2[curPrefix2].c}); }
+
+  const detailRows=rows.filter(r=>r.type==="detail");
+  const bilan=detailRows.filter(r=>r.compte[0]<"6");
+  const gestion=detailRows.filter(r=>r.compte[0]>="6");
+  const sumBD=bilan.reduce((s,r)=>s+r.d,0), sumBC=bilan.reduce((s,r)=>s+r.c,0);
+  const sumGD=gestion.reduce((s,r)=>s+r.d,0), sumGC=gestion.reduce((s,r)=>s+r.c,0);
+  const totD=sumBD+sumGD, totC=sumBC+sumGC;
+
+  return {rows, sumBD,sumBC,sumGD,sumGC,totD,totC};
 }
 
 function printBalance(){
   const {from,to}=getBalancePeriod();
   const co=DB.settings.company||{};
   const fmt=n=>n?Math.round(n).toLocaleString("fr-FR").replace(/\u202f/g," "):"";
-  const fmtD=dt=>dt.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric"});
-  const all=[...buildEcritures()];
-  (DB.journal||[]).forEach(j=>{all.push({compte:j.compte_num||j.compte||"",compteLib:j.compte_lib||"",debit:+j.debit||0,credit:+j.credit||0});});
-  const cm={};
-  all.forEach(e=>{const n=e.compte||"";if(!n)return;if(!cm[n])cm[n]={lib:e.compteLib||"",d:0,c:0};cm[n].d+=+e.debit||0;cm[n].c+=+e.credit||0;});
-  const lignes=Object.entries(cm).sort((a,b)=>a[0].localeCompare(b[0])).filter(([,v])=>v.d||v.c);
-  let totD=0,totC=0,totSD=0,totSC=0;
-  lignes.forEach(([,v])=>{totD+=v.d;totC+=v.c;if(v.d>=v.c)totSD+=v.d-v.c;else totSC+=v.c-v.d;});
-  const sb=lignes.filter(([n])=>n[0]<"6"),sg=lignes.filter(([n])=>n[0]>="6");
-  const sumBD=sb.reduce((s,[,v])=>s+v.d,0),sumBC=sb.reduce((s,[,v])=>s+v.c,0);
-  const sumGD=sg.reduce((s,[,v])=>s+v.d,0),sumGC=sg.reduce((s,[,v])=>s+v.c,0);
+  const fmtSage=dt=>{
+    const j=String(dt.getDate()).padStart(2,"0"),m=String(dt.getMonth()+1).padStart(2,"0"),a=String(dt.getFullYear()).slice(-2);
+    return `${j}/${m}/${a}`;
+  };
+  const now=new Date();
+  const heureT=now.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+
+  const {rows,sumBD,sumBC,sumGD,sumGC,totD,totC}=buildBalanceRowsSage(from,to);
+
+  const rowsHTML=rows.map((r)=>{
+    if(r.type==="subtotal"){
+      return`<tr style="background:#EFEFEF;border-top:1px solid #999;border-bottom:1px solid #999">
+        <td style="padding:3px 6px;font-size:10px"></td>
+        <td style="padding:3px 6px;font-size:10.5px;font-weight:700">${esc(r.lib)}</td>
+        <td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:10.5px;font-weight:700">${fmt(r.d)}</td>
+        <td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:10.5px;font-weight:700">${fmt(r.c)}</td>
+      </tr>`;
+    }
+    return`<tr style="border-bottom:1px solid #f0f0f0">
+      <td style="padding:3px 6px;font-family:monospace;font-size:10px;color:#444">${r.compte}</td>
+      <td style="padding:3px 6px;font-size:10.5px">${esc(r.lib)}</td>
+      <td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:10.5px">${fmt(r.d)}</td>
+      <td style="padding:3px 6px;text-align:right;font-family:monospace;font-size:10.5px">${fmt(r.c)}</td>
+    </tr>`;
+  }).join("");
 
   const html=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
-<title>Balance ${fmtD(from)}-${fmtD(to)}</title>
+<title>Balance des comptes — ${fmtSage(from)} au ${fmtSage(to)}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:Arial,sans-serif;color:#1A1A1C;background:#e8e8e8;padding:14px}
-.page{width:794px;background:#fff;margin:0 auto;box-shadow:0 3px 15px rgba(0,0,0,.1)}
+body{font-family:Arial,Helvetica,sans-serif;color:#1A1A1C;background:#e8e8e8;padding:10px}
+.page{width:794px;background:#fff;margin:0 auto;box-shadow:0 2px 12px rgba(0,0,0,.1)}
 table{width:100%;border-collapse:collapse}
-td,th{font-size:11px}
-@media print{body{background:#fff;padding:0}.page{box-shadow:none;width:100%}.no-print{display:none}@page{margin:7mm;size:A4}}
+@media print{body{background:#fff;padding:0}.page{box-shadow:none;width:100%}.no-print{display:none}@page{margin:9mm 8mm;size:A4}}
 </style></head><body>
 <div class="page">
-  <div style="height:5px;display:flex">
-    <div style="flex:1;background:#00AEEF"></div><div style="flex:1;background:#EC008C"></div>
-    <div style="flex:1;background:#FFC400"></div><div style="flex:1;background:#1A1A1C"></div>
-  </div>
-  <div style="padding:16px 20px">
-    <div style="display:flex;justify-content:space-between;margin-bottom:12px;padding-bottom:10px;border-bottom:2px solid #1A1A1C">
-      <div>
-        <div style="font-size:16px;font-weight:800">${esc(co.name||"CREATIS STUDIO")}</div>
-        <div style="font-size:9px;color:#777;margin-top:3px">CC ${esc(co.cc||"0811105V")} · ${esc(co.regime||"RSI")} · Centre : ${esc(co.centre||"II Plateaux 2")}</div>
-        <div style="font-size:9px;color:#777">RC ${esc(co.rc||"")} · ${esc(co.email||"infos@creatis-ci.com")}</div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:16px;font-weight:800">Balance des comptes</div>
-        <div style="font-size:10px;font-weight:700;color:#EC008C">Complète</div>
-        <div style="font-size:9px;color:#777;margin-top:3px">Période du <strong>${fmtD(from)}</strong> au <strong>${fmtD(to)}</strong></div>
-        <div style="font-size:8px;color:#aaa">Tenue de compte : FCFA · Date de tirage ${new Date().toLocaleDateString("fr-FR")} à ${new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})}</div>
-        <div style="font-size:8px;color:#aaa">© Gescom-Creatis · Sage 100 Comptabilité compatible</div>
-      </div>
-    </div>
+  <div style="padding:14px 20px 10px">
+
+    <table style="margin-bottom:4px"><tr>
+      <td style="width:33%;font-size:10px;font-weight:700;vertical-align:top">${esc(co.name||"CREATIS STUDIO")}</td>
+      <td style="width:34%;text-align:center;font-size:13px;font-weight:700;vertical-align:top">Balance des comptes<br><span style="font-size:10px;font-weight:400">Complète</span></td>
+      <td style="width:33%;text-align:right;font-size:10px;vertical-align:top">
+        Période du<br><strong>${fmtSage(from)}</strong><br>au<br><strong>${fmtSage(to)}</strong>
+      </td>
+    </tr></table>
+
+    <div style="text-align:center;font-size:9px;color:#555;margin-bottom:8px">Tenue de compte : FCFA</div>
+
     <table>
       <thead>
-        <tr style="background:#1A1A1C;color:#fff">
-          <th style="padding:5px 8px;text-align:left;width:95px">N° Compte</th>
-          <th style="padding:5px 8px;text-align:left">Intitulé des comptes</th>
-          <th style="padding:5px 8px;text-align:right;width:110px">Mouvements<br>Débit</th>
-          <th style="padding:5px 8px;text-align:right;width:110px">Mouvements<br>Crédit</th>
-          <th style="padding:5px 8px;text-align:right;width:110px;color:#9AEFC6">Soldes<br>Débit</th>
-          <th style="padding:5px 8px;text-align:right;width:110px;color:#FFAAAA">Soldes<br>Crédit</th>
+        <tr>
+          <td style="width:90px;font-size:9.5px;font-weight:700;border-bottom:1.5px solid #1A1A1C;padding:3px 6px">Numéro<br>de compte</td>
+          <td style="font-size:9.5px;font-weight:700;border-bottom:1.5px solid #1A1A1C;padding:3px 6px">Intitulé des comptes</td>
+          <td colspan="2" style="text-align:center;font-size:9.5px;font-weight:700;border-bottom:1.5px solid #1A1A1C;padding:3px 6px">Mouvements</td>
+        </tr>
+        <tr>
+          <td style="border-bottom:1px solid #1A1A1C"></td>
+          <td style="border-bottom:1px solid #1A1A1C"></td>
+          <td style="width:115px;text-align:right;font-size:9.5px;font-weight:700;border-bottom:1px solid #1A1A1C;padding:2px 6px">Débit</td>
+          <td style="width:115px;text-align:right;font-size:9.5px;font-weight:700;border-bottom:1px solid #1A1A1C;padding:2px 6px">Crédit</td>
         </tr>
       </thead>
-      <tbody>
-      ${lignes.map(([num,v],i)=>{
-        const sd=v.d>=v.c?v.d-v.c:0,sc=v.c>v.d?v.c-v.d:0;
-        return`<tr style="background:${i%2?"#F8F9FA":"#fff"};border-bottom:1px solid #eee">
-          <td style="padding:4px 8px;font-family:monospace;font-size:10px;color:#555">${num}</td>
-          <td style="padding:4px 8px">${esc(v.lib)}</td>
-          <td style="padding:4px 8px;text-align:right;font-family:monospace">${fmt(v.d)}</td>
-          <td style="padding:4px 8px;text-align:right;font-family:monospace">${fmt(v.c)}</td>
-          <td style="padding:4px 8px;text-align:right;font-family:monospace;color:${sd?"#137f4f":"#ccc"}">${fmt(sd)}</td>
-          <td style="padding:4px 8px;text-align:right;font-family:monospace;color:${sc?"#E0444E":"#ccc"}">${fmt(sc)}</td>
-        </tr>`;
-      }).join("")}
-      </tbody>
+      <tbody>${rowsHTML}</tbody>
       <tfoot>
-        <tr style="background:#2C3E50;color:rgba(255,255,255,.85);font-size:10px">
-          <td colspan="2" style="padding:5px 8px;font-style:italic">Totaux comptes de bilan</td>
-          <td style="padding:5px 8px;text-align:right;font-family:monospace">${fmt(sumBD)}</td>
-          <td style="padding:5px 8px;text-align:right;font-family:monospace">${fmt(sumBC)}</td>
-          <td style="padding:5px 8px;text-align:right;font-family:monospace">${fmt(sumBD>=sumBC?sumBD-sumBC:0)}</td>
-          <td style="padding:5px 8px;text-align:right;font-family:monospace">${fmt(sumBC>sumBD?sumBC-sumBD:0)}</td>
+        <tr style="border-top:2px solid #1A1A1C">
+          <td colspan="2" style="padding:4px 6px;font-size:10.5px;font-style:italic">Totaux comptes de bilan</td>
+          <td style="padding:4px 6px;text-align:right;font-family:monospace;font-size:10.5px">${fmt(sumBD)}</td>
+          <td style="padding:4px 6px;text-align:right;font-family:monospace;font-size:10.5px">${fmt(sumBC)}</td>
         </tr>
-        <tr style="background:#922B21;color:rgba(255,255,255,.85);font-size:10px">
-          <td colspan="2" style="padding:5px 8px;font-style:italic">Totaux comptes de gestion</td>
-          <td style="padding:5px 8px;text-align:right;font-family:monospace">${fmt(sumGD)}</td>
-          <td style="padding:5px 8px;text-align:right;font-family:monospace">${fmt(sumGC)}</td>
-          <td style="padding:5px 8px;text-align:right;font-family:monospace">${fmt(sumGD>=sumGC?sumGD-sumGC:0)}</td>
-          <td style="padding:5px 8px;text-align:right;font-family:monospace">${fmt(sumGC>sumGD?sumGC-sumGD:0)}</td>
+        <tr>
+          <td colspan="2" style="padding:4px 6px;font-size:10.5px;font-style:italic">Totaux comptes de gestion</td>
+          <td style="padding:4px 6px;text-align:right;font-family:monospace;font-size:10.5px">${fmt(sumGD)}</td>
+          <td style="padding:4px 6px;text-align:right;font-family:monospace;font-size:10.5px">${fmt(sumGC)}</td>
         </tr>
-        <tr style="background:#1A1A1C;color:#fff;font-weight:700">
-          <td colspan="2" style="padding:6px 8px">Totaux de la balance</td>
-          <td style="padding:6px 8px;text-align:right;font-family:monospace;color:#FFC400">${fmt(totD)}</td>
-          <td style="padding:6px 8px;text-align:right;font-family:monospace;color:#FFC400">${fmt(totC)}</td>
-          <td style="padding:6px 8px;text-align:right;font-family:monospace;color:${totSD?"#9AEFC6":"#666"}">${fmt(totSD)}</td>
-          <td style="padding:6px 8px;text-align:right;font-family:monospace;color:${totSC?"#FFAAAA":"#666"}">${fmt(totSC)}</td>
-        </tr>
-        <tr style="background:${totD===totC?"#137f4f":"#E0444E"};color:#fff">
-          <td colspan="6" style="padding:4px 8px;font-size:9px;text-align:center">
-            ${totD===totC?"✅ Balance équilibrée — "+fmt(totD)+" = "+fmt(totC):"⚠️ Écart : "+fmt(Math.abs(totD-totC))}
-          </td>
+        <tr style="border-top:1.5px solid #1A1A1C">
+          <td colspan="2" style="padding:5px 6px;font-size:11px;font-weight:700">Totaux de la balance</td>
+          <td style="padding:5px 6px;text-align:right;font-family:monospace;font-size:11px;font-weight:700">${fmt(totD)}</td>
+          <td style="padding:5px 6px;text-align:right;font-family:monospace;font-size:11px;font-weight:700">${fmt(totC)}</td>
         </tr>
       </tfoot>
     </table>
-  </div>
-  <div style="padding:6px 20px;border-top:1px solid #eee;font-size:8px;color:#aaa;text-align:center">
-    ${esc(co.name||"")} · ${esc(co.siege||"")} · RC ${esc(co.rc||"")} · CC ${esc(co.cc||"")} · Banque : ${esc(co.banque||"")}
-  </div>
-  <div style="height:4px;display:flex">
-    <div style="flex:1;background:#00AEEF"></div><div style="flex:1;background:#EC008C"></div>
-    <div style="flex:1;background:#FFC400"></div><div style="flex:1;background:#1A1A1C"></div>
+
+    <div style="margin-top:10px;font-size:9px;color:${totD===totC?"#137f4f":"#E0444E"};font-weight:700;text-align:center">
+      ${totD===totC?"✓ Balance équilibrée — Débit = Crédit":"⚠ Écart : "+fmt(Math.abs(totD-totC))+" F CFA"}
+    </div>
+
+    <div style="margin-top:14px;padding-top:6px;border-top:1px solid #ccc;font-size:8.5px;color:#777">
+      Tenue de compte : FCFA &nbsp;&nbsp;&nbsp;
+      © Gescom-Creatis — compatible Sage 100 Comptabilité i7 &nbsp;&nbsp;&nbsp;
+      Date de tirage ${fmtSage(now)} à ${heureT} &nbsp;&nbsp;&nbsp;
+      Page : 1
+    </div>
   </div>
 </div>
 <div class="no-print" style="text-align:center;padding:14px;display:flex;justify-content:center;gap:10px">
