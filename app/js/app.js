@@ -2731,8 +2731,9 @@ function viewEntrepot(){
   $("#pg-title").textContent = "Entrepôt & Stock";
   $("#pg-sub").textContent   = `${prods.length} produits · Valeur stock : ${fmt(valeurStock)}`;
   $("#pg-actions").innerHTML = wr("entrepot")?`
-    <button class="btn btn-primary" onclick="openMvtStock()">+ Mouvement</button>
-    <button class="btn" onclick="openInventaire()" style="border-color:var(--mag);color:var(--mag)">📋 Inventaire physique</button>`:"";
+    ${wr("catalogue")?`<button class="btn" onclick="go('catalogue')">📦 Nouveau produit</button>`:""}
+    <button class="btn" onclick="openInventaire()" style="border-color:var(--mag);color:var(--mag)">📋 Inventaire</button>
+    <button class="btn btn-primary" onclick="openMvtStock()">➕ Mouvement de stock</button>`:"";
 
   const tabs=[
     {k:"stock",      l:"📦 Stock actuel"},
@@ -3221,9 +3222,10 @@ function viewCaisses(){
         <div style="font-size:10.5px;color:var(--txt-3)">
           ${mvts.length} mouvement(s) · Dernier : ${dernierMvt?fmtD(dernierMvt.date):"—"}
         </div>
-        ${wr("caisses")?`<div style="margin-top:10px;display:flex;gap:6px">
+        ${wr("caisses")?`<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn btn-sm" onclick="event.stopPropagation();openMvtCaisse('','${c.id}','entree')">+ Entrée</button>
           <button class="btn btn-sm" onclick="event.stopPropagation();openMvtCaisse('','${c.id}','sortie')">− Sortie</button>
+          <button class="btn btn-sm" style="margin-left:auto" title="Modifier la caisse" onclick="event.stopPropagation();openCaisse('${c.id}')">✏️</button>
         </div>`:""}
       </div>`;
     }).join("")}
@@ -4630,6 +4632,7 @@ function renderPlanComptable(el){
   <div class="card panel">
     <div class="panel-h"><h3>Plan comptable SYSCOHADA — Côte d'Ivoire</h3><div class="spacer"></div>
       <span class="meta">${plan.filter(p=>p.type_compte==="detail").length} comptes de détail</span>
+      ${wr("compta")?`<button class="btn btn-sm" style="margin-left:12px" onclick="openCompte()">+ Compte</button>`:""}
     </div>
     ${classes.map(cls=>{
       const comptesCls=plan.filter(p=>p.classe===cls);
@@ -4649,6 +4652,7 @@ function renderPlanComptable(el){
               <td style="padding:5px 10px;text-align:center">
                 <span style="padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600;background:${p.sens==="debiteur"?"var(--ok)18":"var(--danger)18"};color:${p.sens==="debiteur"?"var(--ok)":"var(--danger)"}">${p.sens==="debiteur"?"D":"C"}</span>
               </td>
+              ${wr("compta")?`<td style="padding:5px 8px;text-align:right"><button class="btn btn-sm" onclick="openCompte('${p.compte}')" style="padding:2px 7px;font-size:10px">✏️</button></td>`:"<td></td>"}
             </tr>`;
           }).join("")}
         </table>
@@ -4658,6 +4662,40 @@ function renderPlanComptable(el){
 }
 
 // ── DÉPENSES (onglet dans Compta) ────────────────────────────────
+function openCompte(compte){
+  if(!wr("compta"))return;
+  const p=compte?(DB.planCompta||[]).find(x=>x.compte===compte)||{}:{};
+  const types=["detail","groupe","classe"].map(t=>`<option value="${t}" ${(p.type_compte||"detail")===t?"selected":""}>${t}</option>`).join("");
+  const sens=["debiteur","crediteur"].map(s=>`<option value="${s}" ${(p.sens||"debiteur")===s?"selected":""}>${s}</option>`).join("");
+  modal(`<h2>${compte?"Modifier":"Nouveau"} compte</h2>
+  <div class="row2">
+    <div class="field"><label>N° Compte *</label><input id="cpt-num" value="${esc(p.compte||"")}" placeholder="ex: 70110000" style="font-family:monospace"></div>
+    <div class="field"><label>Classe</label><input id="cpt-cls" type="number" min="1" max="9" value="${p.classe||""}"></div>
+  </div>
+  <div class="field"><label>Libellé *</label><input id="cpt-lib" value="${esc(p.libelle||"")}"></div>
+  <div class="row2">
+    <div class="field"><label>Type</label><select id="cpt-type">${types}</select></div>
+    <div class="field"><label>Sens</label><select id="cpt-sens">${sens}</select></div>
+  </div>`,
+  [{l:"Annuler",c:"closeModal()"},{l:compte?"Enregistrer":"Créer",c:`saveCompte(${compte?`'${compte}'`:null})`,p:true}]);
+}
+async function saveCompte(compte){
+  const num=document.getElementById("cpt-num")?.value?.trim();
+  const lib=document.getElementById("cpt-lib")?.value?.trim();
+  if(!num||!lib){toast("Numéro et libellé requis");return;}
+  const obj={compte:num,libelle:lib,classe:+document.getElementById("cpt-cls")?.value||null,
+    type_compte:document.getElementById("cpt-type")?.value||"detail",
+    sens:document.getElementById("cpt-sens")?.value||"debiteur",actif:true};
+  const ok=await dbUpsert("crm_plan_comptable",obj);
+  if(!ok)return;
+  if(compte){const i=(DB.planCompta||[]).findIndex(x=>x.compte===compte);if(i>=0)DB.planCompta[i]=fromDb({...obj});}
+  else DB.planCompta=(DB.planCompta||[]).concat(fromDb({...obj}));
+  closeModal();
+  renderComptaTab();
+  toast(compte?"Compte modifié ✓":"Compte créé ✓");
+}
+
+
 function renderDepCompta(el){
   const dev=DB.settings.devise||"F CFA";
   const fmt=n=>Math.round(n||0).toLocaleString("fr-FR").replace(/\u202f/g," ")+" "+dev;
