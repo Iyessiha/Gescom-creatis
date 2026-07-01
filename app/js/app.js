@@ -1374,43 +1374,130 @@ function viewDevis(){docList("devis")}
 function viewFactures(){docList("factures")}
 function docList(kind){
   if(!vis(kind))return;
-  const isF=kind==="factures";const list=DB[kind];
-  $("#pg-actions").innerHTML=`<button class="btn" onclick="exportExcel('${kind}')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editDoc('${kind}')"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>${isF?"Nouvelle facture":"Nouveau devis"}</button>`;
-  if(!list.length){$("#view").innerHTML=emptyState(isF?"Aucune facture":"Aucun devis","",isF?"Nouvelle facture":"Nouveau devis",`editDoc('${kind}')`);return}
-  $("#view").innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Numéro</th><th>Client</th><th>Date</th><th>${isF?"Échéance":"Validité"}</th><th class="r">Total TTC</th><th>Statut</th><th>FNE</th><th></th></tr></thead><tbody>
-    ${list.map(d=>`<tr class="clk" onclick="${isF?`openFacture`:`openDevis`}('${d.id}')">
-      <td><div class="nm tabnum">${esc(d.numero)}</div></td>
-      <td class="meta">${esc(clientName(d.clientId))}</td>
-      <td class="meta">${fdate(d.date)}</td>
-      <td class="meta">${isF?fdate(d.echeance):fdate(d.validite)}</td>
-      <td class="r tabnum">${fcfa(d.montantTTC)}</td>
-      <td>${pill(isF?factStatut(d):d.statut)}</td>
-      <td style="font-size:10px">${isF?fneBadge(d):""}</td>
-      <td class="r" onclick="event.stopPropagation()"><button class="btn btn-sm btn-ghost act-edit" onclick="editDoc('${kind}','${d.id}')">Modifier</button></td>
-    </tr>`).join("")}
-  </tbody></table></div>`;
+  const isF=kind==="factures";
+  window._docFil=window._docFil||{};
+  window._docFil[kind]=window._docFil[kind]||{statut:"",q:""};
+  $("#pg-actions").innerHTML=`
+    <input id="doc-srch-${kind}" placeholder="🔍 Client, numéro…" value="${window._docFil[kind].q||""}"
+      oninput="window._docFil['${kind}'].q=this.value;renderDocList('${kind}')"
+      style="padding:8px 12px;border:1.5px solid var(--ligne);border-radius:8px;background:var(--carte);color:var(--txt-1);width:200px;font-size:13px">
+    <button class="btn" onclick="exportExcel('${kind}')" style="border-color:#1D6F42;color:#1D6F42">📊 Excel</button>
+    ${wr(kind)?`<button class="btn btn-primary act-edit" onclick="editDoc('${kind}')">＋ ${isF?"Nouvelle facture":"Nouveau devis"}</button>`:""}
+  `;
+  renderDocList(kind);
 }
+
+function renderDocList(kind){
+  const isF=kind==="factures";
+  const all=DB[kind]||[];
+  const fil=(window._docFil&&window._docFil[kind])||{statut:"",q:""};
+  const today=new Date().toISOString().slice(0,10);
+
+  // KPIs
+  const totalTTC=all.reduce((s,d)=>s+(d.montantTTC||0),0);
+  const impaye=isF?all.filter(f=>factStatut(f)!=="payée").reduce((s,f)=>s+(f.montantTTC-factPaid(f)),0):0;
+  const enAttente=isF?all.filter(f=>factStatut(f)==="impayée").length:all.filter(d=>d.statut==="envoyé").length;
+  const enRetard=isF?all.filter(f=>{const e=f.echeance;return e&&e<today&&factStatut(f)!=="payée";}).length:0;
+
+  // Tabs statuts
+  const statuts=isF?
+    [["","Tous"],["impayée","Impayée"],["partielle","Partielle"],["payée","Payée"],["annulé","Annulée"]]:
+    [["","Tous"],["brouillon","Brouillon"],["envoyé","Envoyé"],["accepté","Accepté"],["refusé","Refusé"],["facturée","Facturée"]];
+
+  // Filtrer + trier
+  let list=all;
+  if(fil.statut)list=list.filter(d=>isF?factStatut(d)===fil.statut:d.statut===fil.statut);
+  if(fil.q){const q=fil.q.toLowerCase();list=list.filter(d=>(d.numero||"").toLowerCase().includes(q)||(clientName(d.clientId)||"").toLowerCase().includes(q)||(d.objet||"").toLowerCase().includes(q));}
+  list=[...list].sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+
+  // HTML KPIs
+  let kpiHtml="<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:16px'>";
+  kpiHtml+="<div class='card kpi c-cyan' style='padding:14px 16px'><div class='lab'>"+(isF?"Total facturé":"Total devis")+"</div><div class='val tabnum' style='font-size:22px'>"+fcfa(totalTTC)+"</div><div class='delta'>"+all.length+" document(s)</div></div>";
+  if(isF){
+    kpiHtml+="<div class='card kpi c-mag' style='padding:14px 16px'><div class='lab'>Reste à encaisser</div><div class='val tabnum' style='font-size:22px'>"+fcfa(impaye)+"</div><div class='delta'>"+enAttente+" facture(s) impayée(s)</div></div>";
+    kpiHtml+="<div class='card kpi "+(enRetard>0?"c-mag":"c-noir")+"' style='padding:14px 16px'><div class='lab'>En retard</div><div class='val tabnum' style='font-size:22px'>"+enRetard+"</div><div class='delta'>échéance(s) dépassée(s)</div></div>";
+  } else {
+    kpiHtml+="<div class='card kpi c-jaune' style='padding:14px 16px'><div class='lab'>En attente réponse</div><div class='val tabnum' style='font-size:22px'>"+enAttente+"</div><div class='delta'>devis envoyé(s)</div></div>";
+  }
+  kpiHtml+="</div>";
+
+  // HTML Tabs
+  let tabsHtml="<div style='display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px'>";
+  statuts.forEach(function(sv){
+    const v=sv[0],l=sv[1];
+    const active=fil.statut===v;
+    tabsHtml+="<button onclick=\"window._docFil['"+kind+"'].statut='"+v+"';renderDocList('"+kind+"')\" style='padding:5px 14px;border-radius:20px;border:1.5px solid "+(active?"var(--cyan)":"var(--ligne)")+";background:"+(active?"var(--cyan)":"var(--carte)")+";color:"+(active?"#fff":"var(--txt-2)")+";font-size:12px;font-weight:600;cursor:pointer'>"+l+"</button>";
+  });
+  tabsHtml+="</div>";
+
+  // HTML Table
+  let tableHtml="";
+  if(!list.length){
+    tableHtml="<div style='padding:40px;text-align:center;color:var(--txt-3)'>Aucun résultat pour ce filtre</div>";
+  } else {
+    tableHtml="<div style='overflow-x:auto'><table><thead><tr><th>Numéro</th><th>Objet</th><th>Client</th><th>Date</th><th>"+(isF?"Échéance":"Validité")+"</th><th class='r'>Total TTC</th><th>Statut</th>"+(isF?"<th>FNE</th>":"")+"<th></th></tr></thead><tbody>";
+    list.forEach(function(d){
+      const st=isF?factStatut(d):d.statut;
+      const dateCol=isF?d.echeance:d.validite;
+      const retard=isF&&d.echeance&&d.echeance<today&&st!=="payée";
+      const opener=isF?"openFacture":"openDevis";
+      let tr="<tr class='clk' onclick=\""+opener+"('"+d.id+"')\">";
+      tr+="<td><div class='nm tabnum'>"+esc(d.numero)+"</div></td>";
+      tr+="<td class='meta' style='max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"+esc(d.objet||"")+"</td>";
+      tr+="<td class='meta'>"+esc(clientName(d.clientId))+"</td>";
+      tr+="<td class='meta'>"+fdate(d.date)+"</td>";
+      tr+="<td class='meta' style='color:"+(retard?"var(--danger)":"")+"'>"+fdate(dateCol)+(retard?" ⚠️":"")+"</td>";
+      tr+="<td class='r tabnum'>"+fcfa(d.montantTTC)+"</td>";
+      tr+="<td>"+pill(st)+"</td>";
+      if(isF) tr+="<td style='font-size:10px'>"+fneBadge(d)+"</td>";
+      tr+="<td class='r' onclick='event.stopPropagation()'>";
+      if(wr(kind)){
+        tr+="<button class='btn btn-sm btn-ghost act-edit' onclick=\"editDoc('"+kind+"','"+d.id+"')\">✏️</button> ";
+        tr+="<button class='btn btn-sm btn-ghost' title='Dupliquer' onclick=\"dupliquerDoc('"+kind+"','"+d.id+"')\">⧉</button>";
+      }
+      tr+="</td></tr>";
+      tableHtml+=tr;
+    });
+    tableHtml+="</tbody></table></div>";
+  }
+
+  const el=document.getElementById("view");
+  if(el) el.innerHTML=kpiHtml+tabsHtml+tableHtml;
+}
+
 function openDevis(id){
   if(!vis("devis"))return;
   const d=DB.devis.find(x=>x.id===id);if(!d)return;
+  const st=d.statut;
   drawer(d.numero,clientName(d.clientId),docView(d,"devis"),
-    [d.statut==="brouillon"?{label:"Marquer envoyé",cls:"btn",edit:1,fn:`setDevisStatut('${id}','envoyé')`}:null,
-     d.statut==="envoyé"?{label:"Marquer accepté",cls:"btn",edit:1,fn:`setDevisStatut('${id}','accepté')`}:null,
-     (d.statut==="accepté"||d.statut==="envoyé")?{label:"→ Facturer",cls:"btn-mag",edit:1,fn:`devisToFacture('${id}')`}:null,
-     {label:"Imprimer",cls:"btn-ghost",fn:`printDoc('devis','${id}')`},
-     {label:"📧 Envoyer",cls:"btn",fn:`openEmailDoc('devis','${id}')`}
+    [
+     wr("devis")&&st==="brouillon"?{label:"📤 Marquer envoyé",cls:"btn",fn:`setDevisStatut('${id}','envoyé')`}:null,
+     wr("devis")&&st==="envoyé"?{label:"✅ Accepté",cls:"btn",fn:`setDevisStatut('${id}','accepté')`}:null,
+     wr("devis")&&st==="envoyé"?{label:"❌ Refusé",cls:"btn",fn:`setDevisStatut('${id}','refusé')`}:null,
+     wr("devis")&&(st==="accepté"||st==="envoyé")?{label:"→ Facturer",cls:"btn-mag",fn:`devisToFacture('${id}')`}:null,
+     {label:"🖨️ Imprimer",cls:"btn-ghost",fn:`printDoc('devis','${id}')`},
+     {label:"📧 Envoyer",cls:"btn",fn:`openEmailDoc('devis','${id}')`},
+     wr("devis")?{label:"⧉ Dupliquer",cls:"btn",fn:`dupliquerDoc('devis','${id}')`}:null,
+     wr("devis")?{label:"✏️ Modifier",cls:"btn",fn:`closeOverlays();editDoc('devis','${id}')`}:null
     ].filter(Boolean));
 }
 function openFacture(id){
   if(!vis("factures"))return;
   const f=DB.factures.find(x=>x.id===id);if(!f)return;
   const st=factStatut(f);
+  const paid=factPaid(f);
+  const now=new Date().toISOString().slice(0,10);
+  const retard=f.echeance&&f.echeance<now&&st!=="payée";
   drawer(f.numero,clientName(f.clientId),docView(f,"factures"),
-    [st!=="payée"?{label:"Enregistrer paiement",cls:"btn-mag",edit:1,fn:`payModal('${id}')`}:null,
-     (f.fneStatus!=="certifiee")?{label:"🔒 Certifier FNE",cls:"btn",edit:1,fn:`certifierFNE('${id}')`}:null,
-     {label:"Imprimer",cls:"btn-ghost",fn:`printDoc('factures','${id}')`},
+    [
+     wr("factures")&&st!=="payée"&&st!=="annulé"?{label:"💳 Enregistrer paiement",cls:"btn-mag",fn:`payModal('${id}')`}:null,
+     wr("factures")&&retard&&st!=="annulé"?{label:"🔔 Relancer",cls:"btn",fn:`openRelanceEmail('${id}')`}:null,
+     wr("factures")&&(f.fneStatus||f.fne_status)!=="certifiee"&&st!=="annulé"?{label:"🔒 Certifier FNE",cls:"btn",fn:`certifierFNE('${id}')`}:null,
+     {label:"🖨️ Imprimer",cls:"btn-ghost",fn:`printDoc('factures','${id}')`},
      {label:"📧 Envoyer",cls:"btn",fn:`openEmailDoc('factures','${id}')`},
-     st!=="payée"?{label:"🔔 Relancer",cls:"btn",fn:`openRelanceEmail('${id}')`}:null
+     wr("factures")?{label:"⧉ Dupliquer",cls:"btn",fn:`dupliquerDoc('factures','${id}')`}:null,
+     wr("factures")?{label:"✏️ Modifier",cls:"btn",fn:`closeOverlays();editDoc('factures','${id}')`}:null,
+     wr("factures")&&st!=="payée"&&st!=="annulé"?{label:"Annuler la facture",cls:"btn-danger",fn:`annulerDoc('factures','${id}')`}:null
     ].filter(Boolean));
 }
 function setDevisStatut(id,s){if(!guard("devis"))return;DB.devis.find(x=>x.id===id).statut=s;sync("devis",DB.devis.find(x=>x.id===id));closeOverlays();toast("Statut mis à jour");go("devis")}
@@ -1443,40 +1530,136 @@ function editDoc(kind,id){
   if(!guard(kind))return;
   const isF=kind==="factures";
   const existing=id?DB[kind].find(x=>x.id===id):null;
-  const doc=existing||{clientId:"",date:todayISO(),lignes:[{designation:"",qte:1,pu:0,remise:0}],tva:DB.settings.tva||18,notes:"",...(isF?{echeance:"",paiements:[],statut:"impayée"}:{validite:"",statut:"brouillon"})};
+  const doc=existing||{clientId:"",date:todayISO(),objet:"",lignes:[{reference:"",designation:"",unite:"U",qte:1,pu:0,remise:0}],tva:DB.settings.tva||18,notes:"",...(isF?{echeance:"",paiements:[],statut:"impayée"}:{validite:"",statut:"brouillon"})};
   window._editing={kind,id:id||null,doc};
   const clientOpts=DB.clients.map(c=>`<option value="${c.id}" ${doc.clientId===c.id?"selected":""}>${esc(c.nom)}</option>`).join("");
-  const lignesHTML=doc.lignes.map((l,i)=>`<tr>
-    <td><input style="width:100%" value="${esc(l.designation)}" onchange="updLigne(${i},'designation',this.value)"></td>
-    <td><input type="number" value="${l.qte}" min="0" style="width:64px" onchange="updLigne(${i},'qte',+this.value)"></td>
-    <td><input type="number" value="${l.pu}" min="0" style="width:90px" onchange="updLigne(${i},'pu',+this.value)"></td>
-    <td><input type="number" value="${l.remise||0}" min="0" max="100" style="width:60px" onchange="updLigne(${i},'remise',+this.value)"></td>
-    <td class="tabnum r">${fcfa((l.qte||0)*(l.pu||0)*(1-(l.remise||0)/100))}</td>
-    <td><button class="btn btn-sm btn-ghost" onclick="delLigne(${i})">✕</button></td>
-  </tr>`).join("");
+  const lignesHTML=buildLignesHTML(doc.lignes);
   const totals=calcLignes(doc.lignes,doc.tva);
   drawer(id?(isF?"Facture "+existing.numero:"Devis "+existing.numero):(isF?"Nouvelle facture":"Nouveau devis"),"",
-    `<form id="f-doc"><div class="row2">
-      <div class="field"><label>Client</label><select name="clientId"><option value="">— Choisir —</option>${clientOpts}</select></div>
+    `<form id="f-doc">
+    <div class="row2">
+      <div class="field"><label>Client *</label><select name="clientId" onchange="showClientInfo(this.value)"><option value="">— Choisir —</option>${clientOpts}</select></div>
       <div class="field"><label>Date</label><input name="date" type="date" value="${doc.date||todayISO()}"></div>
-    </div><div class="row2">
-      <div class="field"><label>${isF?"Échéance":"Validité"}</label><input name="${isF?"echeance":"validite"}" type="date" value="${isF?(doc.echeance||""):(doc.validite||"")}"></div>
-      <div class="field"><label>TVA %</label><input name="tva" type="number" value="${doc.tva}" min="0" onchange="updTva(+this.value)"></div>
     </div>
-    <div class="fieldset" style="margin-top:8px"><div class="fs-t">Lignes</div>
-    <div style="overflow-x:auto"><table id="t-lignes"><thead><tr><th>Désignation</th><th>Qté</th><th>PU</th><th>Rem %</th><th>Total HT</th><th></th></tr></thead>
-    <tbody id="lignes-body">${lignesHTML}</tbody></table></div>
-    <button class="btn btn-sm" style="margin-top:8px" onclick="addLigne()">+ Ligne</button></div>
+    <div id="cli-info" style="margin:-6px 0 10px;font-size:12px;color:var(--txt-2)"></div>
+    <div class="row2">
+      <div class="field"><label>${isF?"Échéance paiement":"Validité du devis"}</label><input name="${isF?"echeance":"validite"}" type="date" value="${isF?(doc.echeance||""):(doc.validite||"")}"></div>
+      <div class="field"><label>TVA %</label><input name="tva" type="number" value="${doc.tva}" min="0" style="width:80px" onchange="updTva(+this.value)"></div>
+    </div>
+    <div class="field"><label>Objet / Titre</label><input name="objet" value="${esc(doc.objet||"")}" placeholder="ex: Impression flyers A5 — 500 ex."></div>
+    <div class="fieldset" style="margin-top:10px">
+      <div class="fs-t" style="display:flex;align-items:center;justify-content:space-between">
+        Lignes
+        <button type="button" class="btn btn-sm" onclick="openCataloguePicker()" style="font-size:11px">📦 Depuis catalogue</button>
+      </div>
+      <div style="overflow-x:auto"><table id="t-lignes">
+        <thead><tr><th style="width:80px">Réf.</th><th>Désignation</th><th style="width:65px">Unité</th><th style="width:56px">Qté</th><th style="width:90px">PU HT</th><th style="width:55px">Rem%</th><th style="width:90px" class="r">Total HT</th><th style="width:48px"></th></tr></thead>
+        <tbody id="lignes-body">${lignesHTML}</tbody>
+      </table></div>
+      <button type="button" class="btn btn-sm" style="margin-top:8px" onclick="addLigne()">+ Ligne vide</button>
+    </div>
     <div class="kv-block" id="doc-totals" style="margin-top:12px">${docTotalsHTML(totals,doc.tva)}</div>
-    <div class="field"><label>Notes</label><textarea name="notes">${esc(doc.notes||"")}</textarea></div>
+    <div class="field"><label>Notes / Conditions</label><textarea name="notes">${esc(doc.notes||"")}</textarea></div>
     </form>`,
-    [id?{label:"Supprimer",cls:"btn-danger",fn:`delDoc('${kind}','${id}')`}:null,{label:id?"💾 Enregistrer":(isF?"Créer la facture":"Créer le devis"),cls:"btn-primary",fn:`saveDoc()`}].filter(Boolean)
+    [id?{label:"Supprimer",cls:"btn-danger",fn:`delDoc('${kind}','${id}')`}:null,
+     id?{label:"⧉ Dupliquer",cls:"btn",fn:`dupliquerDoc('${kind}','${id}')`}:null,
+     {label:id?"💾 Enregistrer":(isF?"Créer la facture":"Créer le devis"),cls:"btn-primary",fn:`saveDoc()`}
+    ].filter(Boolean)
   );
+  showClientInfo(doc.clientId);
+}
+
+function buildLignesHTML(lignes){
+  const UNITES=["U","M²","ML","M³","Kg","L","H","Fft","Pcs","Ex.","Lot"];
+  return (lignes||[]).map((l,i)=>{
+    const unitOpts=UNITES.map(u=>`<option value="${u}" ${(l.unite||"U")===u?"selected":""}>${u}</option>`).join("");
+    return `<tr>
+      <td><input style="width:78px;font-family:monospace;font-size:11px" value="${esc(l.reference||"")}" placeholder="Réf" onchange="updLigne(${i},'reference',this.value)"></td>
+      <td><input style="width:100%" value="${esc(l.designation)}" placeholder="Désignation *" onchange="updLigne(${i},'designation',this.value)"></td>
+      <td><select style="width:63px;font-size:11px" onchange="updLigne(${i},'unite',this.value)">${unitOpts}</select></td>
+      <td><input type="number" value="${l.qte}" min="0" style="width:54px" onchange="updLigne(${i},'qte',+this.value)"></td>
+      <td><input type="number" value="${l.pu}" min="0" style="width:88px" onchange="updLigne(${i},'pu',+this.value)"></td>
+      <td><input type="number" value="${l.remise||0}" min="0" max="100" style="width:53px" onchange="updLigne(${i},'remise',+this.value)"></td>
+      <td class="tabnum r" style="font-size:12px">${fcfa((l.qte||0)*(l.pu||0)*(1-(l.remise||0)/100))}</td>
+      <td><button type="button" class="btn btn-sm btn-ghost" onclick="delLigne(${i})" style="padding:4px 7px">✕</button></td>
+    </tr>`;
+  }).join("");
+}
+
+function showClientInfo(clientId){
+  const cli=(DB.clients||[]).find(c=>c.id===clientId);
+  const el=document.getElementById("cli-info");
+  if(!el)return;
+  if(!cli){el.textContent="";return;}
+  const parts=[cli.adresse,cli.ncc?"NCC "+cli.ncc:"",cli.tel].filter(Boolean);
+  el.textContent=parts.join(" · ");
+}
+
+function openCataloguePicker(){
+  const prods=(DB.products||[]).filter(p=>p.designation);
+  if(!prods.length){toast("Catalogue vide — ajoutez des produits d'abord");return;}
+  modal(`<h2>📦 Choisir depuis le catalogue</h2>
+    <input id="cat-srch" placeholder="🔍 Rechercher…" oninput="filterCatPicker()" style="width:100%;padding:8px 12px;margin:8px 0;border:1.5px solid var(--ligne);border-radius:8px;background:var(--carte);color:var(--txt-1)">
+    <div id="cat-list" style="max-height:320px;overflow-y:auto">
+      ${prods.map(p=>`<div class="clk" onclick="insertLigneFromProd('${p.id}')"
+        style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:8px;margin-bottom:3px;cursor:pointer;hover:background:var(--papier)">
+        <div>
+          <div style="font-weight:600;font-size:13px">${esc(p.designation)}</div>
+          <div style="font-size:11px;color:var(--txt-2)">${esc(p.reference||"")} ${p.unite?("· "+p.unite):""}</div>
+        </div>
+        <div class="tabnum" style="font-size:13px;font-weight:600;color:var(--cyan)">${fcfa(p.prixVente||p.prix_vente||p.pu||0)}</div>
+      </div>`).join("")}
+    </div>`,
+    [{l:"Fermer",c:"closeModal()"}]);
+}
+
+function filterCatPicker(){
+  const q=(document.getElementById("cat-srch")?.value||"").toLowerCase();
+  document.querySelectorAll("#cat-list .clk").forEach(el=>{
+    el.style.display=el.textContent.toLowerCase().includes(q)?"":"none";
+  });
+}
+
+function insertLigneFromProd(prodId){
+  const p=(DB.products||[]).find(x=>x.id===prodId);
+  if(!p||!window._editing)return;
+  const ligne={
+    reference:p.reference||p.ref||"",
+    designation:p.designation||p.nom||"",
+    unite:p.unite||"U",
+    qte:1,
+    pu:p.prixVente||p.prix_vente||p.pu||p.prixHT||0,
+    remise:0
+  };
+  window._editing.doc.lignes.push(ligne);
+  const i=window._editing.doc.lignes.length-1;
+  const tbody=document.getElementById("lignes-body");
+  if(tbody){
+    const tmp=document.createElement("tbody");
+    tmp.innerHTML=buildLignesHTML([ligne]).replace(/updLigne\(0,/g,`updLigne(${i},`).replace(/delLigne\(0\)/g,`delLigne(${i})`);
+    while(tmp.firstChild) tbody.appendChild(tmp.firstChild);
+  }
+  const t=calcLignes(window._editing.doc.lignes,window._editing.doc.tva);
+  const td=document.getElementById("doc-totals");
+  if(td)td.innerHTML=docTotalsHTML(t,window._editing.doc.tva);
+  closeModal();
+  toast(p.designation+" ajouté ✓");
 }
 function docTotalsHTML(t,tva){return`${kv("Montant HT",fcfa(t.montantHT))}${kv("TVA "+tva+"%",fcfa(t.montantTVA))}${kv("<strong>Total TTC</strong>","<strong class='tabnum'>"+fcfa(t.montantTTC)+"</strong>")}`}
 function updLigne(i,k,v){const e=window._editing;e.doc.lignes[i][k]=v;const t=calcLignes(e.doc.lignes,e.doc.tva);$("#doc-totals").innerHTML=docTotalsHTML(t,e.doc.tva);const tds=[...document.querySelectorAll("#lignes-body tr")];if(tds[i]){const cells=[...tds[i].querySelectorAll("td")];const l=e.doc.lignes[i];if(cells[4])cells[4].textContent=fcfa((l.qte||0)*(l.pu||0)*(1-(l.remise||0)/100))}}
 function updTva(v){const e=window._editing;e.doc.tva=v;const t=calcLignes(e.doc.lignes,v);$("#doc-totals").innerHTML=docTotalsHTML(t,v)}
-function addLigne(){const e=window._editing;e.doc.lignes.push({designation:"",qte:1,pu:0,remise:0});const i=e.doc.lignes.length-1;const tr=document.createElement("tr");tr.innerHTML=`<td><input style="width:100%" onchange="updLigne(${i},'designation',this.value)"></td><td><input type="number" value="1" min="0" style="width:64px" onchange="updLigne(${i},'qte',+this.value)"></td><td><input type="number" value="0" min="0" style="width:90px" onchange="updLigne(${i},'pu',+this.value)"></td><td><input type="number" value="0" min="0" max="100" style="width:60px" onchange="updLigne(${i},'remise',+this.value)"></td><td class="tabnum r">0 F</td><td><button class="btn btn-sm btn-ghost" onclick="delLigne(${i})">✕</button></td>`;document.getElementById("lignes-body").appendChild(tr)}
+function addLigne(){
+  const e=window._editing;
+  const newLigne={reference:"",designation:"",unite:"U",qte:1,pu:0,remise:0};
+  e.doc.lignes.push(newLigne);
+  const i=e.doc.lignes.length-1;
+  const tbody=document.getElementById("lignes-body");
+  if(tbody){
+    const tmp=document.createElement("tbody");
+    tmp.innerHTML=buildLignesHTML([newLigne]).replace(/updLigne\(0,/g,`updLigne(${i},`).replace(/delLigne\(0\)/g,`delLigne(${i})`);
+    while(tmp.firstChild) tbody.appendChild(tmp.firstChild);
+  }
+}
 function delLigne(i){const e=window._editing;e.doc.lignes.splice(i,1);editDoc(e.kind,e.id)}
 function saveDoc(){
   const e=window._editing,isF=e.kind==="factures";
@@ -1485,13 +1668,13 @@ function saveDoc(){
   const totals=calcLignes(e.doc.lignes,e.doc.tva);
   if(e.id){
     const doc=DB[e.kind].find(x=>x.id===e.id);
-    Object.assign(doc,{clientId:fd.get("clientId"),date:fd.get("date"),lignes:e.doc.lignes,tva:e.doc.tva,...totals,notes:fd.get("notes")});
+    Object.assign(doc,{clientId:fd.get("clientId"),date:fd.get("date"),objet:fd.get("objet")||"",lignes:e.doc.lignes,tva:e.doc.tva,...totals,notes:fd.get("notes")});
     if(isF)doc.echeance=fd.get("echeance"); else doc.validite=fd.get("validite");
     sync(e.kind,doc);
   } else {
     const seq=isF?DB.settings.seqFacture:DB.settings.seqDevis;const year=DB.settings.year;
     const num=(isF?"FAC-":"DEV-")+year+"-"+String(seq).padStart(4,"0");
-    const doc={id:uid(),numero:num,clientId:fd.get("clientId"),date:fd.get("date"),lignes:e.doc.lignes,tva:e.doc.tva,...totals,notes:fd.get("notes"),createdAt:Date.now()};
+    const doc={id:uid(),numero:num,clientId:fd.get("clientId"),date:fd.get("date"),objet:fd.get("objet")||"",lignes:e.doc.lignes,tva:e.doc.tva,...totals,notes:fd.get("notes"),createdAt:Date.now()};
     if(isF){doc.echeance=fd.get("echeance");doc.paiements=[];doc.statut="impayée";DB.settings.seqFacture=seq+1}
     else{doc.validite=fd.get("validite");doc.statut="brouillon";DB.settings.seqDevis=seq+1}
     DB[e.kind].push(doc);sync(e.kind,doc);sync("settings",DB.settings);
@@ -1499,16 +1682,93 @@ function saveDoc(){
   closeOverlays();toast(e.id?"Enregistré":(isF?"Facture créée":"Devis créé"));refreshBadges();go(e.kind);
 }
 function delDoc(kind,id){if(!guard(kind))return;confirmModal("Supprimer ?"," ",()=>{DB[kind]=DB[kind].filter(x=>x.id!==id);syncDel(kind,id);closeOverlays();toast("Supprimé");refreshBadges();go(kind)})}
+
+function dupliquerDoc(kind,id){
+  if(!guard(kind))return;
+  const src=DB[kind].find(x=>x.id===id);if(!src)return;
+  const isF=kind==="factures";
+  const seq=isF?DB.settings.seqFacture:DB.settings.seqDevis;
+  const year=DB.settings.year;
+  const num=(isF?"FAC-":"DEV-")+year+"-"+String(seq).padStart(4,"0");
+  const doc={
+    ...JSON.parse(JSON.stringify(src)),
+    id:uid(),numero:num,date:todayISO(),
+    statut:isF?"impayée":"brouillon",
+    createdAt:Date.now()
+  };
+  if(isF){doc.echeance="";doc.paiements=[];doc.fneStatus=null;doc.fne_status=null;DB.settings.seqFacture=seq+1;}
+  else{doc.validite="";DB.settings.seqDevis=seq+1;}
+  DB[kind].push(doc);sync(kind,doc);sync("settings",DB.settings);
+  closeOverlays();toast("Document dupliqué — "+num);refreshBadges();go(kind);
+}
+
+function annulerDoc(kind,id){
+  if(!guard(kind))return;
+  confirmModal("Annuler ce document ?","Cette action est irréversible.",()=>{
+    const doc=DB[kind].find(x=>x.id===id);if(!doc)return;
+    doc.statut="annulé";
+    sync(kind,doc);closeOverlays();toast("Document annulé");refreshBadges();go(kind);
+  });
+}
 function docView(doc,kind){
-  const isF=kind==="factures";const co=DB.settings.company||{};const tva=doc.tva||DB.settings.tva||18;
+  const isF=kind==="factures";const tva=doc.tva||DB.settings.tva||18;
   const paid=isF?factPaid(doc):0;const st=isF?factStatut(doc):doc.statut;
-  return`<div class="doc-view">${kv("Client",clientName(doc.clientId))}${kv("Date",fdate(doc.date))}${kv(isF?"Échéance":"Validité",fdate(isF?doc.echeance:doc.validite))}${kv("Statut",pill(st))}
-    <div style="overflow-x:auto;margin:12px 0"><table><thead><tr><th>Désignation</th><th class="r">Qté</th><th class="r">PU</th><th class="r">Remise</th><th class="r">Total HT</th></tr></thead><tbody>
-    ${(doc.lignes||[]).map(l=>`<tr><td>${esc(l.designation)}</td><td class="r tabnum">${l.qte}</td><td class="r tabnum">${fcfa(l.pu)}</td><td class="r">${l.remise?l.remise+"%":"—"}</td><td class="r tabnum">${fcfa((l.qte||0)*(l.pu||0)*(1-(l.remise||0)/100))}</td></tr>`).join("")}
-    </tbody></table></div>
-    ${kv("Montant HT",fcfa(doc.montantHT))}${kv("TVA "+tva+"%",fcfa(doc.montantTVA))}${kv("<strong>Total TTC</strong>","<strong class='tabnum'>"+fcfa(doc.montantTTC)+"</strong>")}
-    ${isF&&doc.paiements.length?`<div class="fieldset" style="margin-top:12px"><div class="fs-t">Paiements</div>${doc.paiements.map(p=>`<div style="display:flex;justify-content:space-between;padding:4px 0"><span>${fdate(p.date)} — ${esc(p.mode)}</span><span class="tabnum">${fcfa(p.montant)}</span></div>`).join("")}${kv("Reste à régler",fcfa(doc.montantTTC-paid))}</div>`:""}
-    ${doc.notes?`<div class="fieldset" style="margin-top:12px"><div class="fs-t">Notes</div><div>${esc(doc.notes)}</div></div>`:""}
+  const reste=isF?Math.max(0,doc.montantTTC-paid):0;
+  const pct=isF&&doc.montantTTC>0?Math.round((paid/doc.montantTTC)*100):0;
+  const now=new Date().toISOString().slice(0,10);
+  const retard=isF&&doc.echeance&&doc.echeance<now&&st!=="payée";
+  const cli=(DB.clients||[]).find(c=>c.id===doc.clientId)||{};
+
+  const payBar=isF?`<div style="margin:8px 0 12px">
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--txt-2);margin-bottom:4px">
+      <span>Encaissé : <strong>${fcfa(paid)}</strong></span>
+      <span>Reste : <strong style="color:${reste>0?"var(--danger)":"var(--ok)"}">${fcfa(reste)}</strong></span>
+    </div>
+    <div style="height:6px;background:var(--ligne);border-radius:3px;overflow:hidden">
+      <div style="width:${pct}%;height:100%;background:${pct>=100?"var(--ok)":"var(--cyan)"};border-radius:3px;transition:.3s"></div>
+    </div>
+    ${retard?`<div style="color:var(--danger);font-size:11px;margin-top:4px">⚠️ Échéance dépassée depuis le ${fdate(doc.echeance)}</div>`:""}
+  </div>`:"";
+
+  return`<div class="doc-view">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;font-size:12.5px">
+      <div>${kv("Client","<strong>"+esc(clientName(doc.clientId))+"</strong>")}</div>
+      <div>${kv("Statut",pill(st))}</div>
+      ${doc.objet?`<div style="grid-column:1/-1">${kv("Objet",esc(doc.objet))}</div>`:""}
+      <div>${kv("Date",fdate(doc.date))}</div>
+      <div>${kv(isF?"Échéance":"Validité","<span style='color:"+(retard?"var(--danger)":"inherit")+"'>"+fdate(isF?doc.echeance:doc.validite)+"</span>")}</div>
+      ${cli.adresse?`<div style="grid-column:1/-1;font-size:11px;color:var(--txt-2)">${esc(cli.adresse)}${cli.ncc?" · NCC "+cli.ncc:""}</div>`:""}
+    </div>
+    ${isF?payBar:""}
+    <div style="overflow-x:auto;margin:8px 0">
+      <table style="font-size:12px"><thead>
+        <tr><th style="text-align:left">Réf.</th><th style="text-align:left">Désignation</th><th>Unité</th><th class="r">Qté</th><th class="r">PU HT</th><th class="r">Remise</th><th class="r">Total HT</th></tr>
+      </thead><tbody>
+      ${(doc.lignes||[]).map(l=>`<tr>
+        <td style="font-family:monospace;font-size:11px;color:var(--txt-2)">${esc(l.reference||"")}</td>
+        <td>${esc(l.designation)}</td>
+        <td style="text-align:center;color:var(--txt-2)">${esc(l.unite||"U")}</td>
+        <td class="r tabnum">${l.qte}</td>
+        <td class="r tabnum">${fcfa(l.pu)}</td>
+        <td class="r">${l.remise?l.remise+"%":"—"}</td>
+        <td class="r tabnum"><strong>${fcfa((l.qte||0)*(l.pu||0)*(1-(l.remise||0)/100))}</strong></td>
+      </tr>`).join("")}
+      </tbody></table>
+    </div>
+    <div style="border-top:1px solid var(--ligne);padding-top:8px;margin-top:4px">
+      ${kv("Montant HT",fcfa(doc.montantHT))}
+      ${kv("TVA "+tva+"%",fcfa(doc.montantTVA))}
+      ${kv("<strong>Total TTC</strong>","<strong class='tabnum' style='font-size:16px'>"+fcfa(doc.montantTTC)+"</strong>")}
+    </div>
+    ${isF&&(doc.paiements||[]).length?`<div class="fieldset" style="margin-top:12px">
+      <div class="fs-t">Historique des paiements</div>
+      ${doc.paiements.map(p=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--ligne-2)">
+        <div style="font-size:12px">${fdate(p.date)}</div>
+        <div style="font-size:11px;color:var(--txt-2)">${esc(p.mode||"")}</div>
+        <div class="tabnum" style="font-weight:600">${fcfa(p.montant)}</div>
+      </div>`).join("")}
+    </div>`:""}
+    ${doc.notes?`<div class="fieldset" style="margin-top:10px"><div class="fs-t">Notes / Conditions</div><div style="font-size:12px;white-space:pre-wrap">${esc(doc.notes)}</div></div>`:""}
   </div>`;
 }
 function printDoc(kind,id){
