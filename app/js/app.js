@@ -5387,7 +5387,7 @@ async function delProdEtape(id){
 
 const EMAIL_FN = `${typeof SUPABASE_URL!=="undefined"?SUPABASE_URL.replace("/rest/v1",""):""}/functions/v1/crm-send-email`.replace("https://","https://").replace("//functions","https://crlfkiniwalhzvpxrqav.supabase.co/functions");
 // URL directe de la fonction
-const CRM_EMAIL_URL = "https://crlfkiniwalhzvpxrqav.supabase.co/functions/v1/crm-send-email";
+const CRM_EMAIL_URL = "https://kxnyinktawdblomkbukb.supabase.co/functions/v1/crm-send-email";
 
 // ── Ouvrir modal envoi email ─────────────────────────────────────
 function openEmailDoc(kind, id){

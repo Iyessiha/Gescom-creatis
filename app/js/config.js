@@ -1,7 +1,8 @@
 /* ============================================================
    CONFIGURATION SUPABASE — Creatis Studio CRM
-   Projet : barax (crlfkiniwalhzvpxrqav)
+   Projet : gescom-creatis (kxnyinktawdblomkbukb)
+   Organisation : MonWe Infinity LLC
    ============================================================ */
 
-const SUPABASE_URL      = "https://crlfkiniwalhzvpxrqav.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNybGZraW5pd2FsaHp2cHhycWF2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2NzAyODIsImV4cCI6MjA5NjI0NjI4Mn0.vEISYPOPQQZeO6US3C_6pTCDPDup5iUI002euEM-cdE";
+const SUPABASE_URL      = "https://kxnyinktawdblomkbukb.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_A5y2WfBnZ6QhT0DI9axlBw_Yl9ylnVP";
