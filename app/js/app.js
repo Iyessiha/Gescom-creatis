@@ -116,7 +116,7 @@ async function loadAll(){
          stockMvtRows, caissesRows, caisseMvtRows,
          planComptaRows, journalRows,
          prodEtapesRows, prodActiviteRows,
-         emailLogsRows] = await Promise.all([
+         emailLogsRows, bonsAchatRows] = await Promise.all([
     dbFetchOne("app_settings"),
     dbFetch("crm_roles","created_at"),
     dbFetch("crm_users","created_at"),
@@ -137,6 +137,7 @@ async function loadAll(){
     dbFetch("crm_prod_etapes","created_at"),
     dbFetch("crm_prod_activite","created_at"),
     dbFetch("crm_email_logs","created_at"),
+    dbFetch("crm_bons_achat","created_at"),
   ]);
 
   // Settings — reconstruire au format attendu par l'app
@@ -184,6 +185,7 @@ async function loadAll(){
   DB.prodEtapes   = prodEtapesRows;
   DB.prodActivite = prodActiviteRows;
   DB.emailLogs   = emailLogsRows;
+  DB.bonsAchat     = bonsAchatRows;
 }
 
 /* ============================================================
@@ -326,6 +328,32 @@ function fdate(d){if(!d)return"—";return new Date(d).toLocaleDateString("fr-FR
 function todayISO(){return new Date().toISOString().slice(0,10)}
 const BAT_LABELS={non_demarre:"⚪ Pas démarré",en_cours:"🎨 En création",bat_envoye:"📤 BAT envoyé",en_revision:"🔄 Révisions",bat_approuve:"✅ BAT approuvé",en_impression:"🖨️ En impression"};
 const BAT_COLORS={non_demarre:"var(--txt-3)",en_cours:"var(--cyan)",bat_envoye:"var(--jaune)",en_revision:"var(--mag)",bat_approuve:"var(--ok)",en_impression:"#7D3C98"};
+
+// Workflow kanban commandes clients (statuts)
+const CMD_FLOW=[
+  ["devis",     "📋 Devis / Accepté"],
+  ["production","🏭 Production"],
+  ["controle",  "🔍 Contrôle / BAT"],
+  ["livré",     "📦 Livré"],
+  ["facturé",   "✅ Facturé"]
+];
+const CMD_COLORS={
+  "devis":"var(--cyan)",
+  "production":"#7D3C98",
+  "controle":"var(--jaune)",
+  "livré":"var(--ok)",
+  "facturé":"var(--txt-2)"
+};
+
+// Statuts bons d'achat fournisseur
+const BA_FLOW=[
+  ["brouillon",   "📝 Brouillon"],
+  ["envoyé",      "📤 Envoyé"],
+  ["confirmé",    "✅ Confirmé"],
+  ["reçu_partiel","📦 Reçu partiel"],
+  ["reçu",        "✔️ Reçu"],
+  ["annulé",      "❌ Annulé"]
+];
 function batBadge(st){const l=BAT_LABELS[st]||st,c=BAT_COLORS[st]||"var(--txt-2)";return`<span style="padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;background:${c}18;color:${c};border:1px solid ${c}40">${l}</span>`;}
 function clientName(id){const c=DB.clients.find(x=>x.id===id);return c?c.nom:"—"}
 function esc(s){if(s==null||s===undefined)return"";return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}
@@ -2062,55 +2090,258 @@ function printDoc(kind,id){
 
 function viewCommandes(){
   if(!vis("commandes"))return;
-  $("#pg-actions").innerHTML=`<button class="btn" onclick="exportExcel('commandes')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button><button class="btn btn-primary act-edit" onclick="editCmd()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouvelle commande</button>`;
-  if(!DB.commandes.length){$("#view").innerHTML=emptyState("Aucune commande","Créez votre première commande.","Nouvelle commande","editCmd()");return}
-  const cols=CMD_FLOW.map(([k,l])=>({k,l,items:DB.commandes.filter(c=>c.statut===k)}));
-  $("#view").innerHTML=`<div class="kanban">${cols.map(col=>`
-    <div class="kol"><div class="kol-h">${col.l} <span class="badge" style="background:rgba(255,255,255,.15)">${col.items.length}</span></div>
-    ${col.items.map(c=>{const late=c.deadline&&new Date(c.deadline)<new Date()&&c.statut!=="livré"&&c.statut!=="facturé";return`<div class="kard ${late?"late":""}" onclick="openCmd('${c.id}')">
-      <div class="kard-t">${esc(c.titre)}</div>
-      <div class="kard-m"><span>${esc(clientName(c.clientId))}</span>${c.deadline?`<span class="${late?"text-danger":""}">${fdate(c.deadline)}</span>`:""}</div>
-      ${(()=>{const u=DB.users.find(x=>x.id===(c.responsableId||c.responsable_id));return u?`<div style="font-size:10px;color:var(--cyan);margin-top:3px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">👤 ${esc(u.name)}</div>`:""})()}
-      ${(c.statutBat||c.statut_bat)&&(c.statutBat||c.statut_bat)!=="non_demarre"?`<div style="margin-top:4px">${batBadge(c.statutBat||c.statut_bat)}</div>`:""}
-    </div>`}).join("")}
-    </div>`).join("")}</div>`;
+  window._cmdView=window._cmdView||"kanban";
+  window._cmdFil=window._cmdFil||{statut:"",q:""};
+  const now=new Date();
+  const all=DB.commandes||[];
+  const enCours=all.filter(c=>c.statut!=="livré"&&c.statut!=="facturé");
+  const retard=enCours.filter(c=>c.deadline&&new Date(c.deadline)<now).length;
+  const nonFacture=all.filter(c=>c.statut==="livré").length;
+
+  $("#pg-title").textContent="Commandes & Projets";
+  $("#pg-sub").textContent=`${all.length} commande(s) · ${enCours.length} en cours · ${retard>0?retard+" en retard ⚠️":"aucun retard"}`;
+  $("#pg-actions").innerHTML=`
+    <input id="cmd-srch" placeholder="🔍 Titre, client…" value="${window._cmdFil.q||""}"
+      oninput="window._cmdFil.q=this.value;renderCmdView()"
+      style="padding:8px 12px;border:1.5px solid var(--ligne);border-radius:8px;background:var(--carte);color:var(--txt-1);width:180px;font-size:13px">
+    <button class="btn" onclick="window._cmdView=(window._cmdView==='kanban'?'liste':'kanban');renderCmdView()"
+      style="font-size:12px">⊞ ${window._cmdView==="kanban"?"Liste":"Kanban"}</button>
+    <button class="btn" onclick="exportExcel('commandes')" style="border-color:#1D6F42;color:#1D6F42">📊 Excel</button>
+    ${wr("commandes")?`<button class="btn btn-primary act-edit" onclick="editCmd()">＋ Nouvelle commande</button>`:""}
+  `;
+
+  // KPIs
+  const kpiHtml="<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:16px'>"
+    +"<div class='card kpi c-cyan' style='padding:14px 16px'><div class='lab'>Total commandes</div><div class='val tabnum' style='font-size:22px'>"+all.length+"</div><div class='delta'>"+enCours.length+" en cours</div></div>"
+    +"<div class='card kpi "+(retard>0?"c-mag":"c-noir")+"' style='padding:14px 16px'><div class='lab'>En retard</div><div class='val tabnum' style='font-size:22px'>"+retard+"</div><div class='delta'>deadline dépassée</div></div>"
+    +"<div class='card kpi c-jaune' style='padding:14px 16px'><div class='lab'>À facturer</div><div class='val tabnum' style='font-size:22px'>"+nonFacture+"</div><div class='delta'>livrées non facturées</div></div>"
+    +"</div>";
+
+  const el=$("#view");
+  if(el) el.innerHTML=kpiHtml+"<div id='cmd-content'></div>";
+  renderCmdView();
 }
+
+function renderCmdView(){
+  var now=new Date();
+  var today=new Date().toISOString().slice(0,10);
+  var view=window._cmdView||"kanban";
+  var fil=window._cmdFil||{statut:"",q:""};
+  var list=DB.commandes||[];
+  if(fil.q){var q=fil.q.toLowerCase();list=list.filter(function(c){return(c.titre||"").toLowerCase().includes(q)||(clientName(c.clientId)||"").toLowerCase().includes(q)||(c.numero||"").toLowerCase().includes(q);});}
+  if(fil.statut)list=list.filter(function(c){return c.statut===fil.statut;});
+
+  var el=document.getElementById("cmd-content");
+  if(!el)return;
+
+  if(view==="kanban"){
+    if(!list.length){el.innerHTML="<div style='padding:40px;text-align:center;color:var(--txt-3)'>Aucune commande</div>";return;}
+    var html="<div class='kanban'>";
+    CMD_FLOW.forEach(function(kl){
+      var k=kl[0],l=kl[1];
+      var items=list.filter(function(c){return c.statut===k;});
+      var col=CMD_COLORS[k]||"var(--cyan)";
+      html+="<div class='kol'>";
+      html+="<div class='kol-h' style='border-left:3px solid "+col+";padding-left:8px'>"+l+" <span class='badge' style='background:rgba(0,0,0,.12)'>"+items.length+"</span></div>";
+      items.forEach(function(c){
+        var late=c.deadline&&c.deadline<today&&k!=="livré"&&k!=="facturé";
+        var u=(DB.users||[]).find(function(x){return x.id===(c.responsableId||c.responsable_id);});
+        var batSt=c.statutBat||c.statut_bat;
+        html+="<div class='kard"+(late?" late":"")+"' onclick='openCmd(\""+c.id+"\")'>";
+        html+="<div style='display:flex;justify-content:space-between;align-items:flex-start'>";
+        html+="<div class='kard-t' style='flex:1'>"+esc(c.numero||"")+" "+esc(c.titre)+"</div>";
+        if(wr("commandes")) html+="<button class='btn btn-sm btn-ghost' style='padding:2px 5px;margin-left:4px' onclick='event.stopPropagation();editCmd(\""+c.id+"\")'>✏️</button>";
+        html+="</div>";
+        html+="<div class='kard-m'><span>"+esc(clientName(c.clientId))+"</span>"+(c.deadline?"<span class='"+(late?"text-danger":"")+"'>"+fdate(c.deadline)+"</span>":"")+"</div>";
+        if(u) html+="<div style='font-size:10px;color:var(--cyan);margin-top:3px;font-weight:600'>👤 "+esc(u.name)+"</div>";
+        if(batSt&&batSt!=="non_demarre") html+="<div style='margin-top:4px'>"+batBadge(batSt)+"</div>";
+        if(c.montantEstime||c.montant_estime) html+="<div style='font-size:11px;color:var(--txt-2);margin-top:3px;text-align:right'>"+fcfa(c.montantEstime||c.montant_estime)+"</div>";
+        html+="</div>";
+      });
+      html+="</div>";
+    });
+    html+="</div>";
+    el.innerHTML=html;
+  } else {
+    // Vue liste
+    var sorted=[...list].sort(function(a,b){return new Date(b.createdAt||0)-new Date(a.createdAt||0);});
+    if(!sorted.length){el.innerHTML="<div style='padding:40px;text-align:center;color:var(--txt-3)'>Aucune commande</div>";return;}
+    var tabs="<div style='display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px'>";
+    [["","Tous"]].concat(CMD_FLOW).forEach(function(kl){
+      var v=kl[0],l=kl[1];
+      var active=fil.statut===v;
+      tabs+="<button onclick='window._cmdFil.statut=\""+v+"\";renderCmdView()' style='padding:5px 12px;border-radius:20px;border:1.5px solid "+(active?"var(--cyan)":"var(--ligne)")+";background:"+(active?"var(--cyan)":"var(--carte)")+";color:"+(active?"#fff":"var(--txt-2)")+";font-size:12px;font-weight:600;cursor:pointer'>"+l+"</button>";
+    });
+    tabs+="</div>";
+    var tbl="<div style='overflow-x:auto'><table><thead><tr><th>N°</th><th>Titre</th><th>Client</th><th>Deadline</th><th>Montant</th><th>Statut</th><th>BAT</th><th></th></tr></thead><tbody>";
+    sorted.forEach(function(c){
+      var late=c.deadline&&c.deadline<today&&c.statut!=="livré"&&c.statut!=="facturé";
+      var batSt=c.statutBat||c.statut_bat;
+      tbl+="<tr class='clk' onclick='openCmd(\""+c.id+"\")'>";
+      tbl+="<td><div class='nm tabnum'>"+esc(c.numero||"")+"</div></td>";
+      tbl+="<td>"+esc(c.titre)+"</td>";
+      tbl+="<td class='meta'>"+esc(clientName(c.clientId))+"</td>";
+      tbl+="<td class='meta' style='color:"+(late?"var(--danger)":"")+"'>"+fdate(c.deadline)+(late?" ⚠️":"")+"</td>";
+      tbl+="<td class='r tabnum'>"+((c.montantEstime||c.montant_estime)?fcfa(c.montantEstime||c.montant_estime):"—")+"</td>";
+      tbl+="<td>"+pill(c.statut)+"</td>";
+      tbl+="<td>"+(batSt&&batSt!=="non_demarre"?batBadge(batSt):"")+"</td>";
+      tbl+="<td class='r' onclick='event.stopPropagation()'>"+(wr("commandes")?"<button class='btn btn-sm btn-ghost act-edit' onclick='editCmd(\""+c.id+"\")'>✏️</button>":"")+"</td>";
+      tbl+="</tr>";
+    });
+    tbl+="</tbody></table></div>";
+    el.innerHTML=tabs+tbl;
+  }
+}
+
 function openCmd(id){
   if(!vis("commandes"))return;
   const c=DB.commandes.find(x=>x.id===id);if(!c)return;
-  const late=c.deadline&&new Date(c.deadline)<new Date()&&c.statut!=="livré"&&c.statut!=="facturé";
-  drawer(c.numero,c.titre,
-    kv("Client",clientName(c.clientId))+kv("Statut",pill(c.statut))+kv("Deadline",fdate(c.deadline))+(late?"<div class='pill p-red' style='margin-top:8px'><span class='dot'></span>En retard</div>":"")+
-    kv("Devis lié",c.devisId?DB.devis.find(x=>x.id===c.devisId)?.numero:"—")+kv("Notes",c.notes||"")+
-    `<div class="fieldset act-edit" style="margin-top:16px"><div class="fs-t">Changer le statut</div>
-      <div class="filters" style="margin:0">${CMD_FLOW.map(([k,l])=>`<button class="filter-btn ${c.statut===k?"active":""}" onclick="setCmd('${id}','${k}')">${l}</button>`).join("")}</div></div>`,
-    [{label:"Modifier",cls:"btn-primary",edit:1,fn:`closeOverlays();editCmd('${id}')`}]
+  const today=new Date().toISOString().slice(0,10);
+  const late=c.deadline&&c.deadline<today&&c.statut!=="livré"&&c.statut!=="facturé";
+  const devisLie=c.devisId?DB.devis.find(x=>x.id===c.devisId):null;
+  const factureLie=c.factureId?DB.factures.find(x=>x.id===c.factureId):null;
+  const resp=(DB.users||[]).find(x=>x.id===(c.responsableId||c.responsable_id));
+  const fourn=(DB.fournisseurs||[]).find(x=>x.id===(c.fournisseurId||c.fournisseur_id));
+  const batSt=c.statutBat||c.statut_bat||"non_demarre";
+  const bonsAchat=(DB.bonsAchat||[]).filter(b=>(b.commandeId||b.commande_id)===id);
+
+  let body="<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;font-size:12.5px'>";
+  body+=kv("Client","<strong>"+esc(clientName(c.clientId))+"</strong>");
+  body+=kv("Statut",pill(c.statut));
+  if(c.montantEstime||c.montant_estime) body+=kv("Montant estimé","<strong class='tabnum'>"+fcfa(c.montantEstime||c.montant_estime)+"</strong>");
+  body+=kv("Deadline","<span style='color:"+(late?"var(--danger)":"inherit")+"'>"+fdate(c.deadline)+(late?" ⚠️ En retard":"")+"</span>");
+  if(resp) body+=kv("Responsable","👤 "+esc(resp.name));
+  if(fourn) body+=kv("Fournisseur","🏭 "+esc(fourn.nom));
+  if(devisLie) body+=kv("Devis lié","<span style='cursor:pointer;color:var(--cyan)' onclick='closeOverlays();openDevis(\""+devisLie.id+"\")'>" + esc(devisLie.numero) + "</span>");
+  if(factureLie) body+=kv("Facture liée","<span style='cursor:pointer;color:var(--cyan)' onclick='closeOverlays();openFacture(\""+factureLie.id+"\")'>" + esc(factureLie.numero) + "</span>");
+  body+="</div>";
+
+  // BAT
+  body+="<div class='fieldset' style='margin-bottom:12px'><div class='fs-t'>BAT — Bon à tirer</div>"+batBadge(batSt);
+  body+="<div style='display:flex;flex-wrap:wrap;gap:6px;margin-top:8px'>";
+  Object.entries(BAT_LABELS).forEach(function(kl){
+    const k=kl[0],l=kl[1];
+    const active=batSt===k;
+    body+="<button onclick='setCmdBat(\""+id+"\",\""+k+"\")' style='padding:4px 10px;border-radius:12px;font-size:11px;font-weight:600;cursor:pointer;border:1.5px solid "+(active?"var(--cyan)":"var(--ligne)")+";background:"+(active?"var(--cyan)18":"var(--carte)")+";color:"+(active?"var(--cyan)":"var(--txt-2)")+";'>"+(l)+"</button>";
+  });
+  body+="</div></div>";
+
+  // Changer statut commande
+  body+="<div class='fieldset' style='margin-bottom:12px'><div class='fs-t'>Avancement</div><div style='display:flex;flex-wrap:wrap;gap:6px;margin-top:6px'>";
+  CMD_FLOW.forEach(function(kl){
+    const k=kl[0],l=kl[1];
+    const active=c.statut===k;
+    body+="<button onclick='setCmd(\""+id+"\",\""+k+"\")' style='padding:4px 10px;border-radius:12px;font-size:11px;font-weight:600;cursor:pointer;border:1.5px solid "+(active?"var(--cyan)":"var(--ligne)")+";background:"+(active?"var(--cyan)18":"var(--carte)")+";color:"+(active?"var(--cyan)":"var(--txt-2)")+";'>"+(l)+"</button>";
+  });
+  body+="</div></div>";
+
+  // Bons d'achat liés
+  if(bonsAchat.length){
+    body+="<div class='fieldset' style='margin-bottom:12px'><div class='fs-t'>Bons d'achat ("+bonsAchat.length+")</div>";
+    bonsAchat.forEach(function(b){
+      const fo=(DB.fournisseurs||[]).find(x=>x.id===(b.fournisseurId||b.fournisseur_id));
+      body+="<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--ligne-2)'>";
+      body+="<div><strong>"+esc(b.numero||"")+"</strong> · "+esc(fo?fo.nom:"—")+"</div>";
+      body+="<div style='display:flex;gap:8px;align-items:center'><span class='tabnum'>"+fcfa(b.montantTtc||b.montant_ttc||0)+"</span>"+pill(b.statut||"brouillon");
+      body+="<button class='btn btn-sm btn-ghost' onclick='closeOverlays();editBonAchat(\""+b.id+"\")'>✏️</button></div></div>";
+    });
+    body+="</div>";
+  }
+
+  if(c.notes) body+=kv("Notes","<span style='white-space:pre-wrap'>"+esc(c.notes)+"</span>");
+
+  drawer(c.numero||"Commande",c.titre,body,
+    [
+     wr("commandes")?{label:"✏️ Modifier",cls:"btn",fn:`closeOverlays();editCmd('${id}')`}:null,
+     wr("commandes")&&c.statut==="livré"&&!factureLie?{label:"→ Facturer",cls:"btn-mag",fn:`cmdToFacture('${id}')`}:null,
+     wr("fournisseurs")?{label:"🛒 Bon d'achat",cls:"btn",fn:`closeOverlays();editBonAchat('',{commandeId:'${id}',fournisseurId:c.fournisseurId||'',clientLabel:clientName(c.clientId)})`}:null,
+     {label:"Supprimer",cls:"btn-danger",fn:`delCmd('${id}')`}
+    ].filter(Boolean)
   );
+}
+
+function setCmdBat(id,batSt){
+  if(!guard("commandes"))return;
+  const c=DB.commandes.find(x=>x.id===id);if(!c)return;
+  c.statutBat=batSt;c.statut_bat=batSt;
+  sync("commandes",c);closeOverlays();
+  toast("BAT mis à jour : "+BAT_LABELS[batSt]);go("commandes");
+}
+
+function cmdToFacture(cmdId){
+  if(!guard("factures"))return;
+  const c=DB.commandes.find(x=>x.id===cmdId);if(!c)return;
+  const seq=DB.settings.seqFacture;const year=DB.settings.year;
+  const num="FAC-"+year+"-"+String(seq).padStart(4,"0");
+  const f={id:uid(),numero:num,clientId:c.clientId,commandeId:cmdId,date:todayISO(),echeance:"",
+    lignes:[{reference:"",designation:c.titre,unite:"Fft",qte:1,pu:c.montantEstime||c.montant_estime||0,remise:0}],
+    tva:DB.settings.tva||18,statut:"impayée",paiements:[],notes:"Commande "+c.numero,createdAt:Date.now()};
+  const totals=calcLignes(f.lignes,f.tva);Object.assign(f,totals);
+  DB.factures.push(f);DB.settings.seqFacture=seq+1;
+  c.factureId=f.id;c.statut="facturé";
+  sync("factures",f);sync("commandes",c);sync("settings",DB.settings);
+  closeOverlays();toast("Facture "+num+" créée ✓");refreshBadges();go("factures");
 }
 function setCmd(id,s){if(!guard("commandes"))return;const c=DB.commandes.find(x=>x.id===id);c.statut=s;sync("commandes",c);closeOverlays();toast("Statut mis à jour");go("commandes")}
 function editCmd(id){
   if(!guard("commandes"))return;
-  const c=id?DB.commandes.find(x=>x.id===id):{titre:"",clientId:"",statut:"devis",deadline:"",notes:""};
-  const clientOpts=DB.clients.map(cl=>`<option value="${cl.id}" ${c.clientId===cl.id?"selected":""}>${esc(cl.nom)}</option>`).join("");
-  const devisOpts=DB.devis.map(d=>`<option value="${d.id}" ${c.devisId===d.id?"selected":""}>${esc(d.numero)} — ${esc(clientName(d.clientId))}</option>`).join("");
+  const c=id?DB.commandes.find(x=>x.id===id):{titre:"",clientId:"",statut:"devis",deadline:"",montantEstime:0,responsableId:"",fournisseurId:"",devisId:"",notes:"",statutBat:"non_demarre"};
+  const clientOpts=(DB.clients||[]).map(cl=>`<option value="${cl.id}" ${c.clientId===cl.id?"selected":""}>${esc(cl.nom)}</option>`).join("");
+  const devisOpts=(DB.devis||[]).map(d=>`<option value="${d.id}" ${(c.devisId||c.devis_id)===d.id?"selected":""}>${esc(d.numero)} — ${esc(clientName(d.clientId))}</option>`).join("");
+  const respOpts=(DB.users||[]).map(u=>`<option value="${u.id}" ${(c.responsableId||c.responsable_id)===u.id?"selected":""}>${esc(u.name)}</option>`).join("");
+  const foOpts=(DB.fournisseurs||[]).filter(f=>f.actif!==false).map(f=>`<option value="${f.id}" ${(c.fournisseurId||c.fournisseur_id)===f.id?"selected":""}>${esc(f.nom)}</option>`).join("");
+  const statOpts=CMD_FLOW.map(([k,l])=>`<option value="${k}" ${c.statut===k?"selected":""}>${l}</option>`).join("");
+  const batOpts=Object.entries(BAT_LABELS).map(([k,l])=>`<option value="${k}" ${(c.statutBat||c.statut_bat||"non_demarre")===k?"selected":""}>${l}</option>`).join("");
   drawer(id?"Modifier la commande":"Nouvelle commande","",
-    `<form id="f-cmd"><div class="field"><label>Titre du projet *</label><input name="titre" value="${esc(c.titre)}" required></div>
+    `<form id="f-cmd">
+    <div class="field"><label>Titre / Désignation du projet *</label><input name="titre" value="${esc(c.titre)}" placeholder="ex: Impression catalogue A4 — 1000 ex." required></div>
     <div class="row2">
       <div class="field"><label>Client</label><select name="clientId"><option value="">— Choisir —</option>${clientOpts}</select></div>
-      <div class="field"><label>Deadline</label><input name="deadline" type="date" value="${c.deadline||""}"></div>
+      <div class="field"><label>Deadline livraison</label><input name="deadline" type="date" value="${c.deadline||""}"></div>
     </div>
-    <div class="field"><label>Devis associé (optionnel)</label><select name="devisId"><option value="">— Aucun —</option>${devisOpts}</select></div>
-    <div class="field"><label>Notes</label><textarea name="notes">${esc(c.notes||"")}</textarea></div></form>`,
-    [id?{label:"Supprimer",cls:"btn-danger",fn:`delCmd('${id}')`}:null,{label:id?"💾 Enregistrer":"Créer",cls:"btn-primary",fn:`saveCmd('${id||""}')`}].filter(Boolean)
+    <div class="row2">
+      <div class="field"><label>Statut</label><select name="statut">${statOpts}</select></div>
+      <div class="field"><label>Montant estimé (HT)</label><input name="montantEstime" type="number" min="0" value="${c.montantEstime||c.montant_estime||0}"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Responsable</label><select name="responsableId"><option value="">— Aucun —</option>${respOpts}</select></div>
+      <div class="field"><label>Fournisseur principal</label><select name="fournisseurId"><option value="">— Aucun —</option>${foOpts}</select></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Devis associé</label><select name="devisId"><option value="">— Aucun —</option>${devisOpts}</select></div>
+      <div class="field"><label>Statut BAT</label><select name="statutBat">${batOpts}</select></div>
+    </div>
+    <div class="field"><label>Notes / Instructions</label><textarea name="notes">${esc(c.notes||"")}</textarea></div>
+    </form>`,
+    [id?{label:"Supprimer",cls:"btn-danger",fn:`delCmd('${id}')`}:null,
+     {label:id?"💾 Enregistrer":"Créer la commande",cls:"btn-primary",fn:`saveCmd('${id||""}')`}
+    ].filter(Boolean)
   );
 }
 function saveCmd(id){
   if(!guard("commandes"))return;
   const f=$("#f-cmd");const fd=new FormData(f);
   const titre=fd.get("titre")||"";if(!titre.trim()){toast("Titre obligatoire");return}
-  if(id){const c=DB.commandes.find(x=>x.id===id);Object.assign(c,{titre:titre.trim(),clientId:fd.get("clientId"),deadline:fd.get("deadline"),devisId:fd.get("devisId")||null,notes:fd.get("notes")});sync("commandes",c);}
-  else{const seq=DB.settings.seqCommande;const year=DB.settings.year;const num="CMD-"+year+"-"+String(seq).padStart(4,"0");const c={id:uid(),numero:num,titre:titre.trim(),clientId:fd.get("clientId"),statut:"devis",deadline:fd.get("deadline"),devisId:fd.get("devisId")||null,factureId:null,notes:fd.get("notes"),createdAt:Date.now()};DB.commandes.push(c);DB.settings.seqCommande=seq+1;sync("commandes",c);sync("settings",DB.settings);}
-  closeOverlays();toast(id?"Commande mise à jour":"Commande créée");refreshBadges();go(current);
+  const patch={
+    titre:titre.trim(),
+    clientId:fd.get("clientId")||null,
+    deadline:fd.get("deadline")||null,
+    statut:fd.get("statut")||"devis",
+    montantEstime:+fd.get("montantEstime")||0,
+    responsableId:fd.get("responsableId")||null,
+    fournisseurId:fd.get("fournisseurId")||null,
+    devisId:fd.get("devisId")||null,
+    statutBat:fd.get("statutBat")||"non_demarre",
+    notes:fd.get("notes")||""
+  };
+  if(id){const c=DB.commandes.find(x=>x.id===id);Object.assign(c,patch);sync("commandes",c);}
+  else{
+    const seq=DB.settings.seqCommande;const year=DB.settings.year;
+    const num="CMD-"+year+"-"+String(seq).padStart(4,"0");
+    const c={id:uid(),numero:num,...patch,factureId:null,createdAt:Date.now()};
+    DB.commandes.push(c);DB.settings.seqCommande=seq+1;sync("commandes",c);sync("settings",DB.settings);
+  }
+  closeOverlays();toast(id?"Commande mise à jour":"Commande créée ✓");refreshBadges();go(current);
 }
 function delCmd(id){if(!guard("commandes"))return;confirmModal("Supprimer cette commande ?","",()=>{DB.commandes=DB.commandes.filter(x=>x.id!==id);syncDel("commandes",id);closeOverlays();toast("Commande supprimée");refreshBadges();go("commandes")})}
 
@@ -2659,16 +2890,62 @@ function fournisseurName(id){ const f=DB.fournisseurs.find(x=>x.id===id); return
 
 function viewFournisseurs(){
   if(!vis("fournisseurs"))return;
-  $("#pg-actions").innerHTML=`
-    <input id="srch-fournisseurs" placeholder="🔍 Rechercher..." oninput="renderFournisseurList()" style="padding:8px 12px;border:1.5px solid var(--ligne);border-radius:8px;background:var(--carte);color:var(--txt-1);width:200px;font-size:13px">
-    <button class="btn" onclick="exportExcel('fournisseurs')" style="border-color:#1D6F42;color:#1D6F42"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8l4 4-4 4M12 16h4"/></svg>Excel</button>
-    <button class="btn btn-primary act-edit" onclick="editFournisseur()"><svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>Nouveau fournisseur</button>`;
-  renderFournisseurList();
+  window._foTab=window._foTab||"fournisseurs";
+  const tab=window._foTab;
+  $("#pg-title").textContent="Fournisseurs & Achats";
+
+  if(tab==="fournisseurs"){
+    $("#pg-actions").innerHTML=`
+      <input id="srch-fournisseurs" placeholder="🔍 Rechercher..." oninput="renderFournisseurList()" style="padding:8px 12px;border:1.5px solid var(--ligne);border-radius:8px;background:var(--carte);color:var(--txt-1);width:180px;font-size:13px">
+      <button class="btn" onclick="exportExcel('fournisseurs')" style="border-color:#1D6F42;color:#1D6F42">📊 Excel</button>
+      ${wr("fournisseurs")?`<button class="btn btn-primary act-edit" onclick="editFournisseur()">＋ Nouveau fournisseur</button>`:""}`;
+  } else {
+    $("#pg-actions").innerHTML=`
+      ${wr("fournisseurs")?`<button class="btn btn-primary act-edit" onclick="editBonAchat('')">＋ Nouveau bon d'achat</button>`:""}`;
+  }
+
+  // Onglets
+  const tabHtml=`<div style="display:flex;gap:2px;border-bottom:2px solid var(--ligne);margin-bottom:14px">
+    <button onclick="window._foTab='fournisseurs';viewFournisseurs()" style="padding:8px 18px;border:none;border-radius:6px 6px 0 0;cursor:pointer;font-size:12px;font-weight:600;background:${tab==="fournisseurs"?"var(--carte)":"transparent"};color:${tab==="fournisseurs"?"var(--cyan)":"var(--txt-2)"}">🏭 Fournisseurs (${(DB.fournisseurs||[]).length})</button>
+    <button onclick="window._foTab='achats';viewFournisseurs()" style="padding:8px 18px;border:none;border-radius:6px 6px 0 0;cursor:pointer;font-size:12px;font-weight:600;background:${tab==="achats"?"var(--carte)":"transparent"};color:${tab==="achats"?"var(--cyan)":"var(--txt-2)"}">🛒 Bons d'achat (${(DB.bonsAchat||[]).length})</button>
+  </div>`;
+
+  if(tab==="fournisseurs"){
+    $("#view").innerHTML=tabHtml+"<div id='fo-content'></div>";
+    renderFournisseurList();
+  } else {
+    $("#view").innerHTML=tabHtml+"<div id='view'></div>";
+    // Rendre dans un div dédié
+    const el=document.createElement("div");
+    document.getElementById("view").replaceWith(el);
+    el.id="view";
+    viewBonsAchat();
+  }
 }
 function renderFournisseurList(){
   if(!vis("fournisseurs"))return;
   const q=(document.getElementById("srch-fournisseurs")?.value||"").toLowerCase();
-  renderFournisseurList();
+  let list=(DB.fournisseurs||[]);
+  if(q) list=list.filter(f=>(f.nom||"").toLowerCase().includes(q)||(f.contact||"").toLowerCase().includes(q)||(f.secteur||"").toLowerCase().includes(q));
+  list=[...list].sort((a,b)=>(a.nom||"").localeCompare(b.nom||""));
+  const el=document.getElementById("fo-content")||document.getElementById("view");
+  if(!el)return;
+  if(!list.length){el.innerHTML=`<div style="padding:40px;text-align:center;color:var(--txt-3)">Aucun fournisseur</div>`;return;}
+  const rows=list.map(f=>{
+    const deps=(DB.depenses||[]).filter(d=>(d.fournisseurId||d.fournisseur_id)===f.id);
+    const tot=deps.reduce((s,d)=>s+(+d.ttc||0),0);
+    return `<tr class="clk" onclick="openFournisseur('${f.id}')">
+      <td><div class="nm">${esc(f.nom)}</div>${tot>0?`<div class="meta">${fcfa(tot)} achats</div>`:""}</td>
+      <td class="meta">${esc(f.contact||"")}</td>
+      <td class="meta">${esc(f.secteur||"")}</td>
+      <td class="meta">${esc(f.tel||"")}</td>
+      <td class="meta">${esc(f.email||"")}</td>
+      <td class="meta">${esc(f.conditionsPaiement||f.conditions_paiement||"")}</td>
+      <td>${pill(f.actif!==false?"actif":"inactif")}</td>
+      <td class="r" onclick="event.stopPropagation()">${wr("fournisseurs")?`<button class="btn btn-sm btn-ghost act-edit" onclick="editFournisseur('${f.id}')">✏️</button>`:""}</td>
+    </tr>`;
+  }).join("");
+  el.innerHTML=`<div style="overflow-x:auto"><table><thead><tr><th>Fournisseur</th><th>Contact</th><th>Secteur</th><th>Téléphone</th><th>Email</th><th>Conditions</th><th>Statut</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function openFournisseur(id){
@@ -2736,6 +3013,238 @@ function delFournisseur(id){
 /* ============================================================
    CATALOGUE V2 — Référence, Stock, Prix d'achat, Marge
    ============================================================ */
+// ============================================================
+// BONS DE COMMANDE FOURNISSEUR
+// ============================================================
+function viewBonsAchat(){
+  if(!vis("fournisseurs"))return;
+  window._baFil=window._baFil||{statut:"",q:""};
+  const all=DB.bonsAchat||[];
+  const enCours=all.filter(b=>b.statut!=="reçu"&&b.statut!=="annulé").length;
+  const montantTotal=all.reduce((s,b)=>s+(b.montantTtc||b.montant_ttc||0),0);
+  const fil=window._baFil;
+
+  // KPIs
+  let html=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:16px">
+    <div class="card kpi c-cyan" style="padding:14px 16px"><div class="lab">Total bons</div><div class="val tabnum" style="font-size:22px">${all.length}</div><div class="delta">${enCours} en cours</div></div>
+    <div class="card kpi c-mag" style="padding:14px 16px"><div class="lab">Montant total</div><div class="val tabnum" style="font-size:22px">${fcfa(montantTotal)}</div><div class="delta">TTC</div></div>
+  </div>`;
+
+  // Filtres
+  html+=`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">`;
+  [["","Tous"]].concat(BA_FLOW).forEach(([v,l])=>{
+    const active=fil.statut===v;
+    html+=`<button onclick="window._baFil.statut='${v}';viewBonsAchat()" style="padding:5px 12px;border-radius:20px;border:1.5px solid ${active?"var(--cyan)":"var(--ligne)"};background:${active?"var(--cyan)":"var(--carte)"};color:${active?"#fff":"var(--txt-2)"};font-size:12px;font-weight:600;cursor:pointer">${l}</button>`;
+  });
+  html+=`</div>`;
+
+  let list=all;
+  if(fil.statut) list=list.filter(b=>b.statut===fil.statut);
+  if(fil.q){const q=fil.q.toLowerCase();list=list.filter(b=>(b.numero||"").toLowerCase().includes(q)||(fournisseurName(b.fournisseurId||b.fournisseur_id)||"").toLowerCase().includes(q));}
+  list=[...list].sort((a,b)=>new Date(b.createdAt||b.created_at||0)-new Date(a.createdAt||a.created_at||0));
+
+  if(!list.length){
+    html+=`<div style="padding:40px;text-align:center;color:var(--txt-3)">Aucun bon de commande</div>`;
+  } else {
+    const today=new Date().toISOString().slice(0,10);
+    const rows=list.map(b=>{
+      const fo=(DB.fournisseurs||[]).find(x=>x.id===(b.fournisseurId||b.fournisseur_id));
+      const cmd=(DB.commandes||[]).find(x=>x.id===(b.commandeId||b.commande_id));
+      const retard=(b.echeanceLivraison||b.echeance_livraison)&&(b.echeanceLivraison||b.echeance_livraison)<today&&b.statut!=="reçu"&&b.statut!=="annulé";
+      return `<tr class="clk" onclick="openBonAchat('${b.id}')">
+        <td><div class="nm tabnum">${esc(b.numero||"")}</div></td>
+        <td>${esc(fo?fo.nom:"—")}</td>
+        <td class="meta">${fdate(b.date||b.created_at)}</td>
+        <td class="meta" style="color:${retard?"var(--danger)":""}">${fdate(b.echeanceLivraison||b.echeance_livraison)}${retard?" ⚠️":""}</td>
+        <td class="r tabnum">${fcfa(b.montantTtc||b.montant_ttc||0)}</td>
+        <td>${pill(b.statut||"brouillon")}</td>
+        <td class="meta">${cmd?`<span style="cursor:pointer;color:var(--cyan)" onclick="event.stopPropagation();closeOverlays();openCmd('${cmd.id}')">${esc(cmd.numero||cmd.titre)}</span>`:"—"}</td>
+        <td class="r" onclick="event.stopPropagation()">${wr("fournisseurs")?`<button class="btn btn-sm btn-ghost act-edit" onclick="editBonAchat('${b.id}')">✏️</button>`:""}</td>
+      </tr>`;
+    }).join("");
+    html+=`<div style="overflow-x:auto"><table><thead><tr><th>N°</th><th>Fournisseur</th><th>Date</th><th>Livraison</th><th class="r">Montant TTC</th><th>Statut</th><th>Commande liée</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+
+  const el=document.getElementById("view");
+  if(el) el.innerHTML=html;
+}
+
+function editBonAchat(id, prefill){
+  if(!guard("fournisseurs"))return;
+  const b=id?(DB.bonsAchat||[]).find(x=>x.id===id)||{}:(prefill||{});
+  const lignes=b.lignes||[{reference:"",designation:"",unite:"U",qte:1,pu:0,remise:0}];
+  const foOpts=(DB.fournisseurs||[]).filter(f=>f.actif!==false).map(f=>`<option value="${f.id}" ${(b.fournisseurId||b.fournisseur_id||"")===f.id?"selected":""}>${esc(f.nom)}</option>`).join("");
+  const cmdOpts=(DB.commandes||[]).map(c=>`<option value="${c.id}" ${(b.commandeId||b.commande_id||prefill?.commandeId||"")===c.id?"selected":""}>${esc(c.numero||"")} — ${esc(clientName(c.clientId))}</option>`).join("");
+  const statOpts=BA_FLOW.map(([k,l])=>`<option value="${k}" ${(b.statut||"brouillon")===k?"selected":""}>${l}</option>`).join("");
+  const UNITES=["U","M²","ML","M³","Kg","L","H","Fft","Pcs","Resme","Boîte"];
+  const lignesHtml=lignes.map((l,i)=>{
+    const uOpts=UNITES.map(u=>`<option value="${u}" ${(l.unite||"U")===u?"selected":""}>${u}</option>`).join("");
+    return`<tr><td><input style="width:78px;font-size:11px" value="${esc(l.reference||"")}" placeholder="Réf" onchange="updBaLigne(${i},'reference',this.value)"></td><td><input style="width:100%" value="${esc(l.designation)}" placeholder="Désignation" onchange="updBaLigne(${i},'designation',this.value)"></td><td><select style="width:60px;font-size:11px" onchange="updBaLigne(${i},'unite',this.value)">${uOpts}</select></td><td><input type="number" value="${l.qte}" min="0" style="width:54px" onchange="updBaLigne(${i},'qte',+this.value)"></td><td><input type="number" value="${l.pu}" min="0" style="width:88px" onchange="updBaLigne(${i},'pu',+this.value)"></td><td><input type="number" value="${l.remise||0}" min="0" max="100" style="width:50px" onchange="updBaLigne(${i},'remise',+this.value)"></td><td class="tabnum r" style="font-size:12px">${fcfa((l.qte||0)*(l.pu||0)*(1-(l.remise||0)/100))}</td><td><button type="button" class="btn btn-sm btn-ghost" onclick="delBaLigne(${i})">✕</button></td></tr>`;
+  }).join("");
+  const totals=calcLignes(lignes,DB.settings.tva||18);
+  window._editingBa={id:id||null,lignes:JSON.parse(JSON.stringify(lignes))};
+  drawer(id?"Modifier le bon d'achat":"Nouveau bon d'achat","",
+    `<form id="f-ba">
+    <div class="row2">
+      <div class="field"><label>Fournisseur *</label><select name="fournisseurId"><option value="">— Choisir —</option>${foOpts}</select></div>
+      <div class="field"><label>Date</label><input name="date" type="date" value="${b.date||todayISO()}"></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Livraison prévue</label><input name="echeanceLivraison" type="date" value="${b.echeanceLivraison||b.echeance_livraison||""}"></div>
+      <div class="field"><label>Statut</label><select name="statut">${statOpts}</select></div>
+    </div>
+    <div class="field"><label>Commande client associée (optionnel)</label><select name="commandeId"><option value="">— Aucune —</option>${cmdOpts}</select></div>
+    <div class="fieldset" style="margin-top:10px">
+      <div class="fs-t">Lignes à commander</div>
+      <div style="overflow-x:auto"><table id="t-ba-lignes">
+        <thead><tr><th style="width:80px">Réf.</th><th>Désignation</th><th style="width:65px">Unité</th><th style="width:56px">Qté</th><th style="width:90px">PU HT</th><th style="width:55px">Rem%</th><th style="width:90px" class="r">Total HT</th><th style="width:40px"></th></tr></thead>
+        <tbody id="ba-lignes-body">${lignesHtml}</tbody>
+      </table></div>
+      <button type="button" class="btn btn-sm" style="margin-top:8px" onclick="addBaLigne()">+ Ligne</button>
+    </div>
+    <div class="kv-block" id="ba-totals" style="margin-top:12px">${docTotalsHTML(totals,DB.settings.tva||18)}</div>
+    <div class="field"><label>Notes / Instructions</label><textarea name="notes">${esc(b.notes||"")}</textarea></div>
+    </form>`,
+    [id?{label:"Supprimer",cls:"btn-danger",fn:`delBonAchat('${id}')`}:null,
+     {label:id?"💾 Enregistrer":"Créer le bon d'achat",cls:"btn-primary",fn:`saveBonAchat('${id||""}')`}
+    ].filter(Boolean)
+  );
+}
+
+function updBaLigne(i,k,v){
+  if(!window._editingBa)return;
+  window._editingBa.lignes[i][k]=v;
+  const t=calcLignes(window._editingBa.lignes,DB.settings.tva||18);
+  const td=document.getElementById("ba-totals");
+  if(td) td.innerHTML=docTotalsHTML(t,DB.settings.tva||18);
+  const tds=[...document.querySelectorAll("#ba-lignes-body tr")];
+  if(tds[i]){const cells=[...tds[i].querySelectorAll("td")];const l=window._editingBa.lignes[i];if(cells[6])cells[6].textContent=fcfa((l.qte||0)*(l.pu||0)*(1-(l.remise||0)/100));}
+}
+
+function addBaLigne(){
+  if(!window._editingBa)return;
+  const nl={reference:"",designation:"",unite:"U",qte:1,pu:0,remise:0};
+  window._editingBa.lignes.push(nl);
+  const i=window._editingBa.lignes.length-1;
+  const UNITES=["U","M²","ML","M³","Kg","L","H","Fft","Pcs","Resme","Boîte"];
+  const uOpts=UNITES.map(u=>`<option value="${u}" ${u==="U"?"selected":""}>${u}</option>`).join("");
+  const tbody=document.getElementById("ba-lignes-body");
+  if(tbody){const tr=document.createElement("tr");tr.innerHTML=`<td><input style="width:78px;font-size:11px" placeholder="Réf" onchange="updBaLigne(${i},'reference',this.value)"></td><td><input style="width:100%" placeholder="Désignation" onchange="updBaLigne(${i},'designation',this.value)"></td><td><select style="width:60px;font-size:11px" onchange="updBaLigne(${i},'unite',this.value)">${uOpts}</select></td><td><input type="number" value="1" min="0" style="width:54px" onchange="updBaLigne(${i},'qte',+this.value)"></td><td><input type="number" value="0" min="0" style="width:88px" onchange="updBaLigne(${i},'pu',+this.value)"></td><td><input type="number" value="0" min="0" max="100" style="width:50px" onchange="updBaLigne(${i},'remise',+this.value)"></td><td class="tabnum r" style="font-size:12px">0 F</td><td><button type="button" class="btn btn-sm btn-ghost" onclick="delBaLigne(${i})">✕</button></td>`;tbody.appendChild(tr);}
+}
+
+function delBaLigne(i){
+  if(!window._editingBa)return;
+  window._editingBa.lignes.splice(i,1);
+  const id=window._editingBa.id;
+  if(id){const b=(DB.bonsAchat||[]).find(x=>x.id===id);if(b)editBonAchat(id);}
+  else editBonAchat("",null);
+}
+
+async function saveBonAchat(id){
+  if(!guard("fournisseurs"))return;
+  const f=document.getElementById("f-ba");
+  if(!f){toast("Formulaire introuvable");return;}
+  const fd=new FormData(f);
+  if(!fd.get("fournisseurId")){toast("Fournisseur obligatoire");return;}
+  const lignes=window._editingBa?window._editingBa.lignes:[{designation:"",qte:1,pu:0,remise:0}];
+  const tva=DB.settings.tva||18;
+  const totals=calcLignes(lignes,tva);
+  const patch={
+    fournisseurId:fd.get("fournisseurId"),
+    date:fd.get("date")||todayISO(),
+    echeanceLivraison:fd.get("echeanceLivraison")||null,
+    statut:fd.get("statut")||"brouillon",
+    commandeId:fd.get("commandeId")||null,
+    lignes:lignes,
+    montantHt:totals.montantHT,
+    montantTva:totals.montantTVA,
+    montantTtc:totals.montantTTC,
+    notes:fd.get("notes")||""
+  };
+  if(id){
+    const b=(DB.bonsAchat||[]).find(x=>x.id===id);
+    if(b) Object.assign(b,patch);
+    await dbUpsert("crm_bons_achat",{id,...patch});
+  } else {
+    const seq=(DB.settings.seqBonAchat||1);const year=DB.settings.year||new Date().getFullYear();
+    const num="BA-"+year+"-"+String(seq).padStart(4,"0");
+    const b={id:uid(),numero:num,...patch,createdAt:Date.now()};
+    DB.bonsAchat=DB.bonsAchat||[];DB.bonsAchat.push(b);
+    DB.settings.seqBonAchat=(seq+1);
+    await dbUpsert("crm_bons_achat",b);sync("settings",DB.settings);
+  }
+  window._editingBa=null;closeOverlays();
+  toast(id?"Bon d'achat mis à jour ✓":"Bon d'achat créé ✓");
+  go("fournisseurs");
+}
+
+function openBonAchat(id){
+  if(!vis("fournisseurs"))return;
+  const b=(DB.bonsAchat||[]).find(x=>x.id===id);if(!b)return;
+  const fo=(DB.fournisseurs||[]).find(x=>x.id===(b.fournisseurId||b.fournisseur_id));
+  const cmd=(DB.commandes||[]).find(x=>x.id===(b.commandeId||b.commande_id));
+  const today=new Date().toISOString().slice(0,10);
+  const retard=(b.echeanceLivraison||b.echeance_livraison)&&(b.echeanceLivraison||b.echeance_livraison)<today&&b.statut!=="reçu"&&b.statut!=="annulé";
+
+  let body=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+    ${kv("Fournisseur","<strong>"+esc(fo?fo.nom:"—")+"</strong>")}
+    ${kv("Statut",pill(b.statut||"brouillon"))}
+    ${kv("Date commande",fdate(b.date||b.created_at))}
+    ${kv("Livraison prévue","<span style='color:"+(retard?"var(--danger)":"inherit")+"'>"+fdate(b.echeanceLivraison||b.echeance_livraison)+(retard?" ⚠️ En retard":"")+"</span>")}
+    ${cmd?kv("Commande liée","<span style='cursor:pointer;color:var(--cyan)' onclick=\"closeOverlays();openCmd(\'"+cmd.id+"\')\">"+esc(cmd.numero||cmd.titre)+"</span>"):""}
+  </div>`;
+
+  body+=`<div style="overflow-x:auto;margin:8px 0"><table style="font-size:12px"><thead>
+    <tr><th>Réf.</th><th>Désignation</th><th>Unité</th><th class="r">Qté</th><th class="r">PU HT</th><th class="r">Total HT</th></tr>
+  </thead><tbody>
+    ${(b.lignes||[]).map(l=>`<tr>
+      <td style="font-family:monospace;font-size:11px">${esc(l.reference||"")}</td>
+      <td>${esc(l.designation)}</td>
+      <td style="text-align:center">${esc(l.unite||"U")}</td>
+      <td class="r tabnum">${l.qte}</td>
+      <td class="r tabnum">${fcfa(l.pu)}</td>
+      <td class="r tabnum"><strong>${fcfa((l.qte||0)*(l.pu||0)*(1-(l.remise||0)/100))}</strong></td>
+    </tr>`).join("")}
+  </tbody></table></div>`;
+
+  body+=`<div style="border-top:1px solid var(--ligne);padding-top:8px;margin-top:4px">
+    ${kv("Montant HT",fcfa(b.montantHt||b.montant_ht||0))}
+    ${kv("TVA",fcfa(b.montantTva||b.montant_tva||0))}
+    ${kv("<strong>Total TTC</strong>","<strong class='tabnum' style='font-size:16px'>"+fcfa(b.montantTtc||b.montant_ttc||0)+"</strong>")}
+  </div>`;
+
+  if(b.notes) body+=kv("Notes","<span style='white-space:pre-wrap'>"+esc(b.notes)+"</span>");
+
+  // Statuts
+  body+=`<div class="fieldset" style="margin-top:12px"><div class="fs-t">Statut</div><div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">`;
+  BA_FLOW.forEach(([k,l])=>{
+    const active=b.statut===k;
+    body+=`<button onclick="setBaStatut('${id}','${k}')" style="padding:4px 10px;border-radius:12px;font-size:11px;cursor:pointer;border:1.5px solid ${active?"var(--cyan)":"var(--ligne)"};background:${active?"var(--cyan)18":"var(--carte)"};color:${active?"var(--cyan)":"var(--txt-2)"};font-weight:600">${l}</button>`;
+  });
+  body+=`</div></div>`;
+
+  drawer(b.numero||"Bon d'achat",fo?fo.nom:"",body,
+    [
+     wr("fournisseurs")?{label:"✏️ Modifier",cls:"btn",fn:`closeOverlays();editBonAchat('${id}')`}:null,
+     wr("fournisseurs")?{label:"Supprimer",cls:"btn-danger",fn:`delBonAchat('${id}')`}:null
+    ].filter(Boolean)
+  );
+}
+
+function setBaStatut(id,statut){
+  const b=(DB.bonsAchat||[]).find(x=>x.id===id);if(!b)return;
+  b.statut=statut;
+  dbUpdate("crm_bons_achat",id,{statut}).catch(e=>console.error(e));
+  closeOverlays();toast("Statut mis à jour");go("fournisseurs");
+}
+
+function delBonAchat(id){
+  confirmModal("Supprimer ce bon d'achat ?","",()=>{
+    DB.bonsAchat=(DB.bonsAchat||[]).filter(x=>x.id!==id);
+    syncDel("crm_bons_achat",id);closeOverlays();toast("Supprimé");go("fournisseurs");
+  });
+}
+
 function viewCatalogue(){
   if(!vis("catalogue"))return;
   const cats=[...new Set(DB.products.map(p=>p.categorie||"Autre"))].sort();
